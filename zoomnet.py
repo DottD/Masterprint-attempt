@@ -13,7 +13,7 @@ from feed_images import feed_images
 def ZoomBottleNeck(inputs,
 					depth,
 					block_no=1,
-					rep_no=1):
+					block_depth=1):
 	"""
 	Create a ZoomBottleNeck made up by:
 		- upsampling that doubles the image size
@@ -29,17 +29,18 @@ def ZoomBottleNeck(inputs,
 		a 4D tensor [batch size, 2x image width, 2x image height, image depth]
 	"""
 	# Build up the scope
-	local_scope = 'Block'+str(block_no)+'/Rep'+str(rep_no)+'/'
+	block_scope = 'Block'+str(block_no)
 	# Zoom in layer
 	# TODO: Should check for image size
 	img_size = tf.shape(inputs)[1]*2
-	outputs = tf.image.resize_bilinear(inputs, [img_size, img_size], name=(local_scope+'resize'))
-	# ResNet bottleneck
-	resnet_v1.bottleneck(outputs,
-						depth,
-						2*depth,#TODO: check optimal depth_bottleneck value
-						stride=1,
-						scope=(local_scope+'bottleneck'))
+	outputs = tf.image.resize_bilinear(inputs, [img_size, img_size], name=(block_scope+'resize'))
+	# ResNet bottlenecks
+	for n in range(block_depth):
+		resnet_v1.bottleneck(outputs,
+							depth,
+							2*depth,#TODO: check optimal depth_bottleneck value
+							stride=1,
+							scope=(block_scope++'/Rep'+str(rep_no)+'_bottleneck'))
 	return outputs
 
 def ZoomNet(
@@ -75,11 +76,10 @@ def ZoomNet(
 			outputs = tf.image.resize_bilinear(outputs, [l, l], name='initial_resize')
 			# ZoomNet blocks
 			for n in range(N): # 0,...,N-1
-				for r in range(R(n)): # 0,...,R(n)-1
-					outputs = ZoomBottleNeck(outputs,
-											C(n),
-											block_no=n,
-											rep_no=r)
+				outputs = ZoomBottleNeck(outputs,
+										C(n),
+										block_no=n,
+										rep_no=R(n))
 			# Final resize to fit the requested size
 			outputs = tf.image.resize_bilinear(outputs, [output_img_size, output_img_size], name='final_resize')
 		return outputs
