@@ -3,7 +3,7 @@
 % - if it is less than p-percentile consider it backgroud
 % - compute the smallest enclosing rectangle of the foreground
 
-function imseg = borderRemove(img, p, range)
+function [imseg, mask] = borderRemove(img, p, range)
     %% Check input
     if isempty(img)
         error('Input image cannot be empty');
@@ -32,7 +32,12 @@ function imseg = borderRemove(img, p, range)
     % Find peaks and remove the ones too low
     span = range(1):range(2);
     [~, locs, w, prom] = findpeaks(log(circles_energy(span)), span);
-    [~,idx] = sort(w(:).*prom(:), 'descend');
+    if isempty(locs)
+        locs = mean(range);
+        idx = 1;
+    else
+        [~,idx] = sort(w(:).*prom(:), 'descend');
+    end
     % Compute the frequency
     r = size(cartfs,1)/locs(idx(1));
     
@@ -48,6 +53,9 @@ function imseg = borderRemove(img, p, range)
     m = flexConv2(orig, kernel, 'mirror');
     s = sqrt(flexConv2((orig-m).^2, kernel, 'mirror'));
     
+    % Smooth the values
+    s = flexConv2(s, gauss2D(16*r, 16*r), 'replicate');
+    
     % Compute the threshold for s as the p-percentile
     sorted_s_values = sort(s(:),'ascend');
     thres = sorted_s_values( round( p*(numel(s)-1) )+1 );
@@ -55,13 +63,21 @@ function imseg = borderRemove(img, p, range)
     % Segment image according to s
     foreground = s >= thres;
     
-    % Compute smallest bounding box
-    [row, col] = find(foreground);
-    l = min(col(:));
-    r = max(col(:));
-    u = min(row(:));
-    d = max(row(:));
+    % Take only the biggest connected component
+    CC = bwconncomp(foreground);
+    numPixels = cellfun(@numel,CC.PixelIdxList);
+    [~,CCIdx] = max(numPixels);
+    foreground = false(size(foreground));
+    foreground(CC.PixelIdxList{CCIdx}) = true;
+    foreground = imdilate(foreground, ones(4*r));
     
-    % Cut to that box
-    imseg = orig(u:d, l:r);
+    % Compute biggest enclosed bounding box
+    [row, col] = find(foreground);
+    idx = convhull(row, col);
+    mask = poly2mask(col(idx), row(idx), size(img,1), size(img,2));
+    
+    % Output
+    mask = logical(mask);
+    imseg = orig;
+    imseg(~mask) = 0;
 end

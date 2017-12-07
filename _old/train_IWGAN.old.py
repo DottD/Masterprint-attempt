@@ -7,46 +7,15 @@ import sys
 
 import numpy as np
 import tensorflow as tf
-import matplotlib.pyplot as plt
-import random
 from tensorflow.contrib.framework.python.ops import arg_scope
 from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.contrib.layers.python.layers import layers
 from tensorflow.contrib.layers.python.layers import regularizers
 from tensorflow.python.ops import nn_ops
 from tensorflow.python.framework import ops
-#from tensorflow.python import debug as tf_debug
+from load_batch import scan_dir
+from load_batch import load_random_batch
 
-
-# Define function for recursive scan of the database folder
-def scan_dir(path):
-    file_list = []
-    for curr_dir, local_dirs, local_files in os.walk(path):
-        # filter local files
-        local_files = [os.path.join(path,x) for x in local_files if x.endswith('.png')]
-        # append to global list
-        file_list += local_files
-        # recursively scan each subdirectory
-        for inner_dir in local_dirs:
-            file_list += scan_dir(inner_dir)
-    return file_list
-
-# Function to load another batch of images from a stack (list)
-def load_random_batch(stack, n):
-    # Check if the stack is empty
-    if stack:
-        # Take n random file names from the input stack
-        batch = []
-        if n is None:
-            local_selection = stack
-        else:
-            local_selection = random.sample(stack, n)
-        for fileName in local_selection:
-            img = np.array(plt.imread(fileName))
-            img = np.expand_dims(img, axis=2)
-            #img3 = np.stack([img, img, img], axis=2)
-            batch.append(img) # use img3 to create a 3-channel image
-        return np.stack(batch, axis=0)
 
 db_path = os.path.normpath(sys.argv[1]) # Path to the database folder
 out_folder = sys.argv[2] # Name of the folder with training outputs
@@ -211,11 +180,6 @@ def main():
     d_train_op = slim.learning.create_train_op(d_loss, d_optimizer, variables_to_train=d_vars)
     g_train_op = slim.learning.create_train_op(g_loss, g_optimizer, variables_to_train=g_vars)
 
-    # Create clipping ops, thanks to PatrykChrabaszcz for this!
-    clip_discriminator = []
-    for var in d_vars:
-        clip_discriminator.append(tf.assign(var, tf.clip_by_value(var, -c, c)))
-
     with tf.Session() as sess:
 #        sess = tf_d1ebug.LocalCLIDebugWrapperSession(sess)
         coord = tf.train.Coordinator()
@@ -255,9 +219,6 @@ def main():
 
                 # Train discriminator several times
                 for i in range(diters):
-                    # Clip all discriminator weights to be between -c and c
-                    if i % clip_per == 0:
-                        sess.run(clip_discriminator)
                     batch_z = np.random.uniform(-1, 1, [batch_size, z_dim]).astype(np.float32)
                     sess.run(d_train_op, feed_dict={z: batch_z, images: batch_img})
 
