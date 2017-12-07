@@ -58,12 +58,12 @@ def ZoomNet(
 		L2 = L**2
 	lexp = math.ceil(math.log2(L))
 	l = 2 ** lexp
-	Oexp = math.ceil(math.log2(output_img_size)) # computed output image size
+	Oexp = math.ceil(math.log2(output_img_size))+1 # computed output image size
 	O = 2 ** Oexp
 	N = Oexp - lexp
 	C = lambda k: output_img_depth * ( 4**(N-k-1) )
 	Nb = max_bottlenecks_block
-	R = lambda k: math.ceil( Nb * math.exp( -2.0 * (2.0*k/(N-1.0)-1.0)**2 ) )
+	R = lambda k: math.ceil( Nb * math.exp( -0.5 * (2.0*k/(N-1.0)-1.0)**2 ) )
 	# Define the function to return
 	def net(inputs):
 		with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
