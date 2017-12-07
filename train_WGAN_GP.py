@@ -110,16 +110,18 @@ def main(_):
         tf.global_variables_initializer().run()
         tf.local_variables_initializer().run()
             
-        print("Model already trained for " + str(tf.train.get_global_step()) + " steps")
-        
         # Set up and perform the training
         print('Training for ' + str(F.max_iterations) + ' more steps')
-        estimator.train(
-            feed_data,
-            steps=F.max_iterations
-        )
+        try:
+            estimator.train(
+                feed_data,
+                steps=F.max_iterations
+            )
+        except KeyboardInterrupt:
+            print("Closing session...")
+        finally: 
+            coord.request_stop()
             
-        coord.request_stop()
         coord.join(threads)
 
 if __name__ == '__main__':
