@@ -4,7 +4,6 @@ Convert the input database of images to a TFRecord file with given name.
 import argparse
 import os
 import sys
-import math
 from random import shuffle
 import matplotlib.pyplot as plt
 import numpy as np
@@ -65,7 +64,10 @@ def label_sd09(filename):
 def convert_to(dataset, name, folder, filename2label_fn=label_sd09):
 	"""Converts a dataset to tfrecords."""
 	# Output file name
-	outname = os.path.join(folder, name + '_' + str(len(dataset)) + '.tfrecords')
+	out_dirname = os.path.normpath(folder)
+	outname = os.path.join(out_dirname, name + '_' + str(len(dataset)) + '.tfrecords')
+	if not os.path.exists(out_dirname):
+			os.makedirs(out_dirname)
 	print('Writing to', outname)
 	writer = tf.python_io.TFRecordWriter(outname)
 	# Loop over the list of filenames
@@ -133,8 +135,8 @@ if __name__ == '__main__':
 	)
 	args = vars(parser.parse_args())
 	files = scan_dir(args["in"])
-	files = shuffle(files)
-	train_amount = math.round(len(files)*(1-args["valid_fraction"]))
+	shuffle(files)
+	train_amount = round(len(files)*(1-args["valid_fraction"]))
 	train_files = files[:train_amount]
 	valid_files = files[train_amount:]
 	convert_to(train_files, "training_" + args["name"], args["out"])
