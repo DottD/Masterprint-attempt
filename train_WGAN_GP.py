@@ -7,6 +7,7 @@ Created on Wed Nov 29 15:07:48 2017
 """
 
 import sys
+import argparse
 import os
 import psutil
 import math
@@ -17,31 +18,51 @@ from tensorflow.contrib.slim.nets import resnet_v1
 from tensorflow.contrib.slim.nets import resnet_utils
 from tensorflow.python.ops import variable_scope
 from feed_images import feed_images
+from tensorflow.python.framework import ops
+from tensorflow.python.ops.losses import losses
+from tensorflow.contrib.gan.python.losses import combine_adversarial_loss
 import zoomnet
 
 
-tf.flags.DEFINE_integer("img_size", 128, "Expected image side")
-tf.flags.DEFINE_integer("img_depth", 1, "Exptected number of channels per image")
-tf.flags.DEFINE_integer("batch_size", 128, "Number of images to feed per iteration")
-tf.flags.DEFINE_integer("max_iterations", 1000, "Maximum number of iterations")
-tf.flags.DEFINE_integer("summary_steps", 1, "Summary every this many steps")
-tf.flags.DEFINE_integer("save_steps", 10, "Save checkpoint every this many steps")
+# Parse command line arguments
+parser = argparse.ArgumentParser(description="Train a Wasserstein GAN with gradient penalty to generate fingerprints")
+parser.add_argument("--in", help="Full path to the input database directory")
+parser.add_argument("--out", help="Name of the output folder, created in the current directory")
+parser.add_argument("-s", "--steps",
+        default=1000,
+        type=int,
+        help="Number of training steps")
+parser.add_argument("--batch-size", default=128, type=int, help="Number of images to feed per iteration")
+parser.add_argument("--img-size", default=(128, 128, 1), 
+        type=lambda strin: tuple(int(val) for val in strin.split('x')),
+        help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
+parser.add_argument("-E", "--summary-steps", default=10, type=int,
+        help="Summary every this many steps")
+parser.add_argument("-F", "--save-steps", default=100, type=int,
+        help="Save checkpoint every this many steps")
+parser.add_argument("-G", "--gen-input-size", default=100, type=int,
+        help="Amount of random numbers to feed the generator")
+args = vars(parser.parse_args())
+
+tf.flags.DEFINE_integer("img_size", args["img_size"][0], "Expected image side")
+tf.flags.DEFINE_integer("img_depth", args["img_size"][2], "Exptected number of channels per image")
+tf.flags.DEFINE_integer("batch_size", args["batch_size"], "Number of images to feed per iteration")
+tf.flags.DEFINE_integer("max_iterations", args["steps"], "Maximum number of iterations")
+tf.flags.DEFINE_integer("summary_steps", args["summary_steps"], "Summary every this many steps")
+tf.flags.DEFINE_integer("save_steps", args["save_steps"], "Save checkpoint every this many steps")
 tf.flags.DEFINE_float("learning_rate", 0.00005, "Learning rate")
-tf.flags.DEFINE_integer("gen_input_size", 100, "Amount of random numbers to feed the generator")
+tf.flags.DEFINE_integer("gen_input_size", args["gen_input_size"], "Amount of random numbers to feed the generator")
 tf.flags.DEFINE_float("gradient_penalty_weight", 10.0, "Coefficient for gradient penalty")
 
 F = tf.flags.FLAGS
 
 # I/O Folders
-db_path = os.path.normpath(sys.argv[1]) # Path to the database folder
-out_folder = sys.argv[2] # Name of the folder with training outputs
+db_path = os.path.normpath(args["in"]) # Path to the database folder
+out_folder = args["out"] # Name of the folder with training outputs
 log_dir = os.path.join(os.path.dirname(db_path), out_folder)
-save_dir = os.path.join(log_dir, 'ckpt')
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
-if not os.path.exists(save_dir):
-    os.makedirs(save_dir)
-print('Logs will be summarized in ' + log_dir + ' and saved to ' + save_dir)
+print('Logs will be summarized in ' + log_dir)
 
 # Set up generator and discriminator
 def generator(inputs):
@@ -49,9 +70,20 @@ def generator(inputs):
                             F.batch_size,
                             F.img_size,
                             F.img_depth,
-                            max_bottlenecks_block=7,
+                            max_bottlenecks_block=15,
                             scope='Generator')
-    return net_fn(inputs)
+    outputs = net_fn(inputs)
+    
+#    trainable_vars = tf.trainable_variables(scope='Generator')
+#    tot_parameters = 0
+#    with open('generator.txt', 'w') as f:
+#        for var in trainable_vars:
+#            tot_parameters += var.get_shape().num_elements()
+#            f.write(str(var.name)+'\n')
+#    print('Number of generator\'s trainable variables: ' + 
+#        str(len(trainable_vars)) + ' with ' + str(tot_parameters) + ' total parameters')
+        
+    return outputs
 
 def discriminator(inputs, gen_inputs):
     disc, _ = resnet_v1.resnet_v1_50(inputs,
@@ -61,6 +93,16 @@ def discriminator(inputs, gen_inputs):
                                   output_stride=None,
                                   reuse=tf.AUTO_REUSE,
                                   scope='Discriminator')
+    
+#    trainable_vars = tf.trainable_variables(scope='Discriminator')
+#    tot_parameters = 0
+#    with open('discriminator.txt', 'w') as f:
+#        for var in trainable_vars:
+#            tot_parameters += var.get_shape().num_elements()
+#            f.write(str(var.name)+'\n')
+#    print('Number of discriminator\'s trainable variables: ' + 
+#        str(len(trainable_vars)) + ' with ' + str(tot_parameters) + ' total parameters')
+
     return disc
 
 def feed_data():
@@ -76,6 +118,12 @@ def feed_data():
                         batch_size = F.batch_size)
                                       
     return noise, image
+    
+def disc_loss(gan_model, **kwargs):
+    dis_loss = tf.contrib.gan.losses.wasserstein_discriminator_loss(gan_model, add_summaries=True)
+    gp_loss = tf.contrib.gan.losses.wasserstein_gradient_penalty(gan_model, add_summaries=True)
+    dis_loss += F.gradient_penalty_weight * gp_loss
+    return dis_loss
 
 def main(_):
     # Adjust the gen_input_size to be a perfect square
@@ -88,7 +136,7 @@ def main(_):
             generator_fn=generator,
             discriminator_fn=discriminator,
             generator_loss_fn=tfgan.losses.wasserstein_generator_loss,
-            discriminator_loss_fn=tfgan.losses.wasserstein_gradient_penalty,
+            discriminator_loss_fn=disc_loss,
             generator_optimizer=tf.train.AdamOptimizer(F.learning_rate, 0.5),
             discriminator_optimizer=tf.train.AdamOptimizer(F.learning_rate, 0.5),
             add_summaries=[tfgan.estimator.SummaryType.IMAGES,tfgan.estimator.SummaryType.VARIABLES],
@@ -105,13 +153,9 @@ def main(_):
         # Start populating the filename queue.
         coord = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(coord=coord)
-
-        # Variable initialization
-        tf.global_variables_initializer().run()
-        tf.local_variables_initializer().run()
             
         # Set up and perform the training
-        print('Training for ' + str(F.max_iterations) + ' more steps')
+        print('Training for ' + str(F.max_iterations) + ' steps')
         try:
             estimator.train(
                 feed_data,

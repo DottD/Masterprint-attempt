@@ -12,6 +12,7 @@ def feed_images(db_path,
 				num_classes = 5400):
 	"""
 	Set up an input tf pipeline to load images.
+	It stops with an OutOfRange error after each epoch.
 	
 	Args:
 		db_path: path to the database folder
@@ -25,7 +26,8 @@ def feed_images(db_path,
 	# Set up the operations to feed the GAN with images
 	filename_pattern = os.path.join(db_path, patterns)
 	filenames = tf.train.match_filenames_once(filename_pattern)
-	filenames = tf.train.string_input_producer(filenames)
+	tot_files_no = tf.size(filenames)
+	filenames = tf.train.string_input_producer(filenames, num_epochs=1)
 	image_reader = tf.WholeFileReader()
 	filenames, raw_values = image_reader.read(filenames)
 	image = tf.image.decode_png(raw_values)
@@ -44,9 +46,13 @@ def feed_images(db_path,
 		ids = tf.string_to_number(ids[0], tf.int32) * 2 + tf.cond(tf.equal(ids[1],'s'), 
 																lambda: tf.constant(1), 
 																lambda: tf.constant(0))
-		truth = tf.one_hot(ids, num_classes)
-		batch = tf.train.shuffle_batch([image, truth], batch_size, capacity, min_after_dequeue)
+		ids = tf.one_hot(ids, num_classes)
+		batch = tf.train.batch([image, ids], batch_size, 
+#			capacity, min_after_dequeue,
+			allow_smaller_final_batch=True)
+		return batch + [tot_files_no]
 	else:
-		batch = tf.train.shuffle_batch([image], batch_size, capacity, min_after_dequeue)
-																		
-	return batch
+		batch = tf.train.batch([image], batch_size, 
+#			capacity, min_after_dequeue,
+			allow_smaller_final_batch=True)
+		return batch, tot_files_no

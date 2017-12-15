@@ -28,19 +28,18 @@ def ZoomBottleNeck(inputs,
 	Returns:
 		a 4D tensor [batch size, 2x image width, 2x image height, image depth]
 	"""
-	# Build up the scope
-	block_scope = 'Block'+str(block_no)
-	# Zoom in layer
-	# TODO: Should check for image size
-	img_size = tf.shape(inputs)[1]*2
-	outputs = tf.image.resize_bilinear(inputs, [img_size, img_size], name=(block_scope+'resize'))
-	# ResNet bottlenecks
-	for n in range(block_depth):
-		resnet_v1.bottleneck(outputs,
-							depth,
-							2*depth,#TODO: check optimal depth_bottleneck value
-							stride=1,
-							scope=(block_scope++'/Rep'+str(rep_no)+'_bottleneck'))
+	with tf.variable_scope('Block'+str(block_no), reuse=tf.AUTO_REUSE):
+		# Zoom in layer
+		# TODO: Should check for image size
+		img_size = tf.shape(inputs)[1]*2
+		outputs = tf.image.resize_bilinear(inputs, [img_size, img_size], name='resize')
+		# ResNet bottlenecks
+		for n in range(block_depth):
+			resnet_v1.bottleneck(outputs,
+								depth,
+								8*depth,#TODO: check optimal depth_bottleneck value
+								stride=1,
+								scope='BnRep'+str(n))
 	return outputs
 
 def ZoomNet(
@@ -67,7 +66,7 @@ def ZoomNet(
 	R = lambda k: math.ceil( Nb * math.exp( -0.5 * (2.0*k/(N-1.0)-1.0)**2 ) )
 	# Define the function to return
 	def net(inputs):
-		with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
+		with tf.variable_scope(scope):
 			# Fully connected layer
 			outputs = slim.fully_connected(inputs, L2, scope='preprocessing')
 			# Reshape
@@ -79,7 +78,7 @@ def ZoomNet(
 				outputs = ZoomBottleNeck(outputs,
 										C(n),
 										block_no=n,
-										rep_no=R(n))
+										block_depth=R(n))
 			# Final resize to fit the requested size
 			outputs = tf.image.resize_bilinear(outputs, [output_img_size, output_img_size], name='final_resize')
 		return outputs

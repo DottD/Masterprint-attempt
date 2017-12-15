@@ -121,7 +121,7 @@ for file = file_list'
     end
     % Output information about the total number of draws
     disp(['Total number of draws: ', num2str(total_draws), ...
-        ' draws performed over requested ratio: ', num2str(draws_ratio)]);
+        ', ratio: ', num2str(draws_ratio)]);
     %% Crop and save partial images
     for n = 1:N
         partial_img = img(tlc_row(n)+partial_span, tlc_col(n)+partial_span);
