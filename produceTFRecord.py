@@ -4,6 +4,8 @@ Convert the input database of images to a TFRecord file with given name.
 import argparse
 import os
 import sys
+import math
+from random import shuffle
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -123,6 +125,17 @@ if __name__ == '__main__':
 		required=True,
 		help='Name of the output file'
 	)
+	parser.add_argument(
+		'--valid-fraction',
+		type=float,
+		default=0.1,
+		help='Number of images saved as validation dataset, as fraction of the total amount of images'
+	)
 	args = vars(parser.parse_args())
 	files = scan_dir(args["in"])
-	convert_to(files, args["name"], args["out"])
+	files = shuffle(files)
+	train_amount = math.round(len(files)*(1-args["valid_fraction"]))
+	train_files = files[:train_amount]
+	valid_files = files[train_amount:]
+	convert_to(train_files, "training_" + args["name"], args["out"])
+	convert_to(valid_files, "validation_" + args["name"], args["out"])

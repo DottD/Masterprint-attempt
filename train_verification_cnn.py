@@ -105,17 +105,22 @@ if __name__ == '__main__':
 	parser.add_argument("--out", help="Name of the output folder, created in the current directory")
 	parser.add_argument("--load", help="Name of the folder containing the pre-trained model")
 	parser.add_argument("-E", "--epochs", default=40, type=int, help="Number of training steps")
-	parser.add_argument("--batch-size", default=64, type=int, help="Number of images to feed per iteration")
+	parser.add_argument("--batch-size", default=128, type=int, help="Number of images to feed per iteration")
 	parser.add_argument("--img-size", default=(128, 128, 1), 
 		type=lambda strin: tuple(int(val) for val in strin.split('x')),
 		help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
 	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
 	parser.add_argument("-D", "--decay-steps", default=10, type=int, help="Epochs between consecutive learning rate reductions")
-	parser.add_argument("-R", "--reg-coeff", default=1e-2, type=float, help="Regularization coefficient")
+	parser.add_argument("-R", "--reg-coeff", default=1e-3, type=float, help="Regularization coefficient")
 	parser.add_argument("-F", "--save-epochs", default=10, type=int, help="Save checkpoint every this many epochs")
 	parser.add_argument("-N", "--num-subjects", default=1000, type=int, help="Total number of people enrolled in the dataset")
-	parser.add_argument("-L", "--learning-rate", default=5e-5, type=float, help="Learning Rate")
+	parser.add_argument("-L", "--learning-rate", default=2e-4, type=float, help="Learning Rate")
 	args = vars(parser.parse_args())
+	print('------')
+	print("Parameters:")
+	for (key, val) in args.items():
+		print(key, '=', val)
+	print('------')
 	
 	# I/O Folders
 	db_path = os.path.normpath(args["in"]) # Path to the database folder
@@ -241,7 +246,7 @@ if __name__ == '__main__':
 					curr_train_acc /= curr_train_imgs
 					summary_values_t = [
 						tf.Summary.Value(tag="Evaluation/loss", simple_value=curr_train_loss),
-						tf.Summary.Value(tag="Evaluation/accuracy", simple_value=curr_train_acc)]
+						tf.Summary.Value(tag="Evaluation/accuracy", simple_value=curr_train_acc*100.0)]
 					summary_t = tf.Summary(value=summary_values_t)
 					summary_writer_t.add_summary(summary_t, global_step=epoch)
 					print('Summary for training written on epoch ' + str(epoch))
@@ -266,7 +271,7 @@ if __name__ == '__main__':
 					curr_valid_acc /= curr_valid_imgs
 					summary_values_v = [
 						tf.Summary.Value(tag="Evaluation/loss", simple_value=curr_valid_loss),
-						tf.Summary.Value(tag="Evaluation/accuracy", simple_value=curr_valid_acc)]
+						tf.Summary.Value(tag="Evaluation/accuracy", simple_value=curr_valid_acc*100.0)]
 					summary_v = tf.Summary(value=summary_values_v)
 					summary_writer_v.add_summary(summary_v, global_step=epoch)
 					print('Summary for validation written on epoch ' + str(epoch))
