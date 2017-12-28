@@ -4,69 +4,88 @@ from datetime import datetime
 import tensorflow as tf
 from tensorflow.contrib.slim.nets import resnet_v1
 from produceTFRecord import input_pipeline
+import zoomnet
 slim = tf.contrib.slim
+tfgan = tf.contrib.gan
 
 
 def create_model(
 		iterator,
 		tot_images,
-		num_subjects=1000,
+		noise_length=100,
+		batch_size=64,
 		img_size=128,
 		img_depth=1,
 		decay_steps=10,
-		reg_coeff=1.0):
+		grad_pen_coeff=10.0,
+		max_bottlenecks_block=6):
 	"""
 	Create a ResNet-50 model, with the last layer as
 	a sigmoid activation function. Batches of images 
 	are loaded from the folder provided as "path" argument.
 	
 	Args:
-		- iterator: iterator to the database, see tf.data.
-		- op_type: can be either "train" or "eval"; in the former case,
-		the output is a training operation, in the latter one it is a
-		tuple with loss and number of correct answer.
-		- tot_images: total number of images in the database pointed by iterator.
-		- num_subjects: number of total output classes.
-		- img_size: expected size of each image; if the loaded images are not
-		compliant they are scaled to the requested size.
-		- img_depth: expected depth of images; images will not be adapted to this
-		parameter, so exception or errors may be thrown is it not as expected.
-		- decay_steps: number of epochs between two consecutive learning rate reductions.
+		...
 		
 	Returns:
 		See op_type argument documentation.
 	"""
-	# Read images and their correct classification
-	images, labels = iterator.get_next()
-	labels = tf.one_hot(labels, num_subjects)
-	images = tf.image.resize_images(images, [img_size, img_size]) # mostly useless
-	images.set_shape([None, img_size, img_size, img_depth])
-	# Set up the ResNet architecture
-	predictions, _ = resnet_v1.resnet_v1_50(images,
-									num_classes=num_subjects,
-									is_training=True,
-									global_pool=True,
-									output_stride=None,
-									reuse=tf.AUTO_REUSE,
-									scope='Classifier')
+	def generator(inputs):
+		"""
+		Define the generator network
+		"""
+		net_fn = zoomnet.ZoomNet(noise_length,
+								batch_size,
+								img_size,
+								img_depth,
+								max_bottlenecks_block,
+								scope='Generator')
+		outputs = net_fn(inputs)
+		return outputs
+
+	def discriminator(inputs):
+		"""
+		Define the discriminator network
+		"""
+		disc, _ = resnet_v1.resnet_v1_50(inputs,
+										num_classes=1,
+										is_training=False,
+										global_pool=True,
+										output_stride=None,
+										reuse=tf.AUTO_REUSE,
+										scope='Discriminator')
+		return disc
+	# Read a batch of images (function definition)
+	true_images, _ = iterator.get_next()
+	true_images = tf.image.resize_images(true_images, [img_size, img_size]) # mostly useless
+	true_images.set_shape([None, img_size, img_size, img_depth])
 	# Actual batch size (may be different at the end of the input queue)
-	bs = tf.shape(images)[0]
-	# Top layer is a sigmoid activation function, as requested in the paper
-	predictions = tf.sigmoid(predictions, name="Sigmoid")
-	predictions = tf.reshape(predictions, [bs, -1])
-	# Define the loss function
-	loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=predictions, labels=labels)
-	loss = tf.reduce_sum(loss, axis=1) # Sum along the classes
-	loss = tf.reduce_mean(loss) # Mean along the samples
-	# Set up regularizers
-	weights = tf.contrib.framework.get_variables(scope="Classifier", suffix="weight")
-	reg_term = tf.reduce_mean(tf.stack(weights) ** 2) * reg_coeff/2.0
-#	reg = tf.contrib.layers.l2_regularizer(scale=reg_coeff/(2*tf.to_float(bs)))
-#	weights = tf.contrib.framework.get_variables(scope='Classifier') # TODO: filter only weights
-#	reg_term = tf.contrib.layers.apply_regularization(reg, weights)
-	loss += reg_term
+	bs = tf.shape(true_images)[0]
+	# Set up the architecture
+	noise = tf.random_uniform([bs, noise_length*img_depth], -1, 1)
+	fake_images = generator(noise)
+	fake_disc = discriminator(fake_images)
+	true_disc = discriminator(true_images)
+	# Define losses as in https://gist.github.com/mjdietzx/a8121604385ce6da251d20d018f9a6d6
+	# and in generative-model...
+	# Function that computes Earth mover distance of a tensor distribution
+	def em_loss(_tensor):
+		return tf.reduce_mean(_tensor)
+	# Function that computes x_hat (batch_size, ...)
+	def rand_mid_point(_x, _x_tilde):
+		_epsilon = tf.random_normal([batch_size, 1, 1, 1])
+		return _epsilon * _x + (1.0 - _epsilon) * _x_tilde
+	# Function that computes the gradient penalty
+	def grad_penalty(_D, _x, _x_tilde, _lambda):
+		_x_hat = rand_mid_point(_x, _x_tilde)
+		_grad = tf.gradients(_D(_x_hat), [_x_hat])[0]
+		_grad_norm = tf.sqrt(tf.reduce_sum((_grad)**2, axis=1))
+		return _lambda * (_grad_norm - 1)**2
+	# Losses (discriminator yields 1 when recognizes false images)
+	d_loss = tf.reduce_mean( true_disc - fake_disc + grad_penalty(discriminator, true_images, fake_images, grad_pen_coeff) )
+	g_loss = - tf.reduce_mean( fake_disc )
 	
-	### This block should executed only to compute train_op
+	### This block should executed only to compute the training operations
 	# Define a global step counter
 	step = tf.train.get_or_create_global_step()
 	with tf.variable_scope('time', reuse=tf.AUTO_REUSE):
@@ -84,15 +103,14 @@ def create_model(
 	)
 	# Training operation
 	optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate, name='Adam')
-	train_op = slim.learning.create_train_op(loss, optimizer, global_step=step)
+	d_train_op = slim.learning.create_train_op(d_loss, optimizer, global_step=step)
+	g_train_op = slim.learning.create_train_op(g_loss, optimizer, global_step=step)
 	
-	### This block should be executed only to compute loss and hits
-	# Convert labels form one_hot vectors to indices
-	labels = tf.argmax(labels, axis=1)
-	# Check predictions
-	hits = tf.nn.in_top_k(predictions, labels, 1)
+	### This block should be executed only to compute the accuracy
+	d_accuracy = 1.0 - tf.reduce_mean(true_disc)
+	g_accuracy = tf.reduce_mean(fake_disc)
 	
-	return train_op, loss, hits
+	return d_train_op, g_train_op, d_accuracy, g_accuracy, fake_images
 
 
 if __name__ == '__main__':
@@ -112,11 +130,13 @@ if __name__ == '__main__':
 		type=lambda strin: tuple(int(val) for val in strin.split('x')),
 		help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
 	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
-	parser.add_argument("-D", "--decay-steps", default=10, type=int, help="Epochs between consecutive learning rate reductions")
-	parser.add_argument("-R", "--reg-coeff", default=1e-3, type=float, help="Regularization coefficient")
-	parser.add_argument("-F", "--save-epochs", default=10, type=int, help="Save checkpoint every this many epochs")
-	parser.add_argument("-N", "--num-subjects", default=1000, type=int, help="Total number of people enrolled in the dataset")
-	parser.add_argument("-L", "--learning-rate", default=1e-5, type=float, help="Learning Rate")
+	parser.add_argument("--decay-steps", default=10, type=int, help="Epochs between consecutive learning rate reductions")
+	parser.add_argument("--save-epochs", default=10, type=int, help="Save checkpoint every this many epochs")
+	parser.add_argument("--noise-length", default=100, type=int, help="Total number of people enrolled in the dataset")
+	parser.add_argument("--learning-rate", default=1e-5, type=float, help="Learning Rate")
+	parser.add_argument("--disc-train-steps", default=5, type=int, help="Number of iterations of the critic per generator iteration")
+	parser.add_argument("--grad-pen-coeff", default=10.0, type=float, help="Gradient penalty coefficient")
+	parser.add_argument("--max-bottlenecks-block", default=10, type=int, help="Maximum block repetition in ZoomNet")
 	args = vars(parser.parse_args())
 	print('------')
 	print("Parameters:")
@@ -147,14 +167,16 @@ if __name__ == '__main__':
 	iterator, filename, tot_images = input_pipeline(args["batch_size"])
 		
 	# Define the model for training
-	train_op, loss, hits = create_model(
+	d_train_op, g_train_op, d_accuracy, g_accuracy, fake_images = create_model(
 			iterator,
 			tot_images,
-			num_subjects=args["num_subjects"],
+			noise_length=args["noise_length"],
+			batch_size=args["batch_size"],
 			img_size=args["img_size"][0],
 			img_depth=args["img_size"][2],
 			decay_steps=args["decay_steps"],
-			reg_coeff=args["reg_coeff"]
+			grad_pen_coeff=args["grad_pen_coeff"],
+			max_bottlenecks_block=args["max_bottlenecks_block"]
 		)
 	
 	# Brief check up on the number of variables
@@ -202,21 +224,40 @@ if __name__ == '__main__':
 		while not should_end and epoch < args["epochs"]:
 			# Training operation (one epoch at a time)
 			print("Started training on epoch " + str(epoch) + "...")
-			sess.run(iterator.initializer, feed_dict={filename: train_db_path})
-			try:
-				while True:
-					# Feeding mandatory because it is used to create labels
-					tmp_loss = sess.run(train_op, feed_dict={filename: train_db_path})
-					print("Step done, loss:", tmp_loss)
-			except KeyboardInterrupt:
-				# User terminated with Ctrl-C
-				should_end = True
-				print('Interrupted during epoch ' + str(epoch))
-			except tf.errors.OutOfRangeError:
-				# Update epoch
-				new_epoch = epoch + 1
-				# Epoch is finished
-				print('Epoch ' + str(epoch) + ' finished')
+			# Train the discriminator first (several times)
+			for diter in range(args["disc_train_steps"]):
+				sess.run(iterator.initializer, feed_dict={filename: train_db_path})
+				try:
+					while True:
+						# Feeding mandatory because it is used to create labels
+						temp_loss = sess.run(d_train_op, feed_dict={filename: train_db_path})
+						print("Temp d_loss", temp_loss)
+				except KeyboardInterrupt:
+					# User terminated with Ctrl-C
+					should_end = True
+					print('Interrupted during epoch ' + str(epoch))
+					break
+				except tf.errors.OutOfRangeError:
+					# Epoch is finished
+					print('Discriminator training on epoch', str(epoch), 'finished, iteration', str(diter))
+			# Train the generator once
+			if not should_end:
+				sess.run(iterator.initializer, feed_dict={filename: train_db_path})
+				try:
+					while True:
+						# Feeding mandatory because it is used to create labels
+						temp_loss = sess.run(g_train_op, feed_dict={filename: train_db_path})
+						print("Temp g_loss", temp_loss)
+				except KeyboardInterrupt:
+					# User terminated with Ctrl-C
+					should_end = True
+					print('Interrupted during epoch ' + str(epoch))
+					break
+				except tf.errors.OutOfRangeError:
+					# Update epoch
+					new_epoch = epoch + 1
+					# Epoch is finished
+					print('Generator training on epoch', str(epoch), 'finished')
 				
 			# Save the model every __ epochs or if the program is about to terminate
 			if epoch % args["save_epochs"] == 0 or should_end:
@@ -233,14 +274,14 @@ if __name__ == '__main__':
 				
 				# Evaluation on training set
 				sess.run(iterator.initializer, feed_dict={filename: train_db_path})
-				curr_train_loss, curr_train_acc, curr_train_imgs = 0., 0., 0.
+				curr_d_acc, curr_g_acc = 0., 0.
+				counter = 0
 				try:	
 					while True:
-						loc_train_loss, loc_train_hits = sess.run([loss, hits], feed_dict={filename: train_db_path})
-						curr_train_loss += loc_train_loss
-						curr_train_imgs += len(loc_train_hits)
-						curr_train_acc += sum(loc_train_hits)
-						print(curr_train_imgs, curr_train_acc)
+						loc_d_acc, loc_g_acc = sess.run([d_accuracy, g_accuracy], feed_dict={filename: train_db_path})
+						curr_d_acc += loc_d_acc
+						curr_g_acc += loc_g_acc
+						counter += 1
 				except KeyboardInterrupt:
 					# User terminated with Ctrl-C
 					should_end = True
@@ -249,24 +290,25 @@ if __name__ == '__main__':
 				except tf.errors.OutOfRangeError:
 					print('Epoch ' + str(epoch) + ' evaluated on training set')
 					# Store summaries
-					curr_train_loss /= curr_train_imgs
-					curr_train_acc /= curr_train_imgs
-					summary_values_t = [
-						tf.Summary.Value(tag="Evaluation/loss", simple_value=curr_train_loss),
-						tf.Summary.Value(tag="Evaluation/accuracy", simple_value=curr_train_acc*100.0)]
-					summary_t = tf.Summary(value=summary_values_t)
-					summary_writer_t.add_summary(summary_t, global_step=epoch)
+					curr_d_acc /= counter
+					curr_g_acc /= counter
+					summary_values = [
+						tf.Summary.Value(tag="Evaluation/d_accuracy", simple_value=curr_d_acc*100.0),
+						tf.Summary.Value(tag="Evaluation/g_accuracy", simple_value=curr_g_acc*100.0)]
+					summary = tf.Summary(value=summary_values)
+					summary_writer_t.add_summary(summary, global_step=epoch)
 					print('Summary for training written on epoch ' + str(epoch))
 					
 				# Evaluation on validation set
 				sess.run(iterator.initializer, feed_dict={filename: valid_db_path})
-				curr_valid_loss, curr_valid_acc, curr_valid_imgs = 0., 0., 0.
+				curr_d_acc, curr_g_acc = 0., 0.
+				counter = 0
 				try:
 					while True:
-						loc_valid_loss, loc_valid_hits = sess.run([loss, hits], feed_dict={filename: valid_db_path})
-						curr_valid_loss += loc_valid_loss
-						curr_valid_imgs += len(loc_valid_hits)
-						curr_valid_acc += sum(loc_valid_hits)
+						loc_d_acc, loc_g_acc = sess.run([d_accuracy, g_accuracy], feed_dict={filename: valid_db_path})
+						curr_d_acc += loc_d_acc
+						curr_g_acc += loc_g_acc
+						counter += 1
 				except KeyboardInterrupt:
 					# User terminated with Ctrl-C
 					should_end = True
@@ -275,13 +317,13 @@ if __name__ == '__main__':
 				except tf.errors.OutOfRangeError:
 					print('Epoch ' + str(epoch) + ' evaluated on validation set')
 					# Store summaries
-					curr_valid_loss /= curr_valid_imgs
-					curr_valid_acc /= curr_valid_imgs
-					summary_values_v = [
-						tf.Summary.Value(tag="Evaluation/loss", simple_value=curr_valid_loss),
-						tf.Summary.Value(tag="Evaluation/accuracy", simple_value=curr_valid_acc*100.0)]
-					summary_v = tf.Summary(value=summary_values_v)
-					summary_writer_v.add_summary(summary_v, global_step=epoch)
+					curr_d_acc /= counter
+					curr_g_acc /= counter
+					summary_values = [
+						tf.Summary.Value(tag="Evaluation/d_accuracy", simple_value=curr_d_acc*100.0),
+						tf.Summary.Value(tag="Evaluation/g_accuracy", simple_value=curr_g_acc*100.0)]
+					summary = tf.Summary(value=summary_values)
+					summary_writer_v.add_summary(summary, global_step=epoch)
 					print('Summary for validation written on epoch ' + str(epoch))
 					
 			# Update epoch

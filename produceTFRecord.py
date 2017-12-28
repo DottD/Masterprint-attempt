@@ -130,14 +130,18 @@ if __name__ == '__main__':
 	parser.add_argument(
 		'--valid-fraction',
 		type=float,
-		default=0.1,
-		help='Number of images saved as validation dataset, as fraction of the total amount of images'
+		default=None,
+		help='Number of images saved as validation dataset, as fraction of the total amount of images. If missing no validation data will be saved.'
 	)
 	args = vars(parser.parse_args())
 	files = scan_dir(args["in"])
 	shuffle(files)
-	train_amount = round(len(files)*(1-args["valid_fraction"]))
-	train_files = files[:train_amount]
-	valid_files = files[train_amount:]
-	convert_to(train_files, "training_" + args["name"], args["out"])
-	convert_to(valid_files, "validation_" + args["name"], args["out"])
+	if args["valid_fraction"] is not None:
+		train_amount = round(len(files)*(1-args["valid_fraction"]))
+		train_files = files[:train_amount]
+		valid_files = files[train_amount:]
+		convert_to(train_files, "training_" + args["name"], args["out"])
+		convert_to(valid_files, "validation_" + args["name"], args["out"])
+	else:
+		convert_to(files, args["name"], args["out"])
+		
