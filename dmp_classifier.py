@@ -15,6 +15,8 @@ import time
 import progressbar
 # Files
 import nistdata
+from raghakot_resnet import ResnetBuilder
+from tensorboard_logging import Logger
 
 
 def classifier(input_shape=(128, 128, 1),
@@ -86,9 +88,8 @@ if __name__ == '__main__':
 	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
 	parser.add_argument("--learning-rate", default=5E-5, type=float, help="Learning rate for Adam optimizer")
-	parser.add_argument("--decay-rate", default=3E-7, type=float, help="Decay at each epoch")
 	parser.add_argument("--model-complexity", default=4, type=int, help="Complexity level of the simpler classifier")
-	parser.add_argument("--resnet50", action="store_true", default=False, help="Whether to use the ResNet50 classifier or a simpler one")
+	parser.add_argument("--resnet", action="store_true", default=False, help="Whether to use the ResNet50 classifier or a simpler one")
 	args = vars(parser.parse_args())
 	print('------')
 	print("Parameters:")
@@ -102,9 +103,8 @@ if __name__ == '__main__':
 	nb_epoch = args["epochs"]
 	batch_size = args["batch_size"]
 	learning_rate = args["learning_rate"]
-	decay_rate = args["decay_rate"]
 	net_width_level = args["model_complexity"]
-	use_resnet = args["resnet50"]
+	use_resnet = args["resnet"]
 
 	# I/O Folders
 	db_path = os.path.abspath(os.path.normpath(args["in"])) # Path to the database folder
@@ -121,29 +121,27 @@ if __name__ == '__main__':
 		return x*2/255 - 1
 	X_train, Y_train = nistdata.load_data(s=256, dirname=db_path)
 	nb_img = X_train.shape[0]
-	num_classes = Y_train.shape[1]
+	num_classes = Y_train.max()+1
 	datagen = nistdata.DataGenerator(crop_size=img_size, preprocessing_function=tanh_transform)
 	gen_batch = datagen.flow_random(X=X_train, y=Y_train, batch_size=batch_size)
 
 	# Create and compile models
 	if use_resnet:
-		CNN = ResNet50(weights=None, classes=num_classes)
-		CNN.layers.pop()
-		x = CNN.layers[-1].output
-		x = Dense(num_classes, activation='sigmoid', name='fc1000')(x)
-		CNN = Model(CNN.inputs, x)
+		# resnet18 with sigmoid final activation layer
+		channel_first_shape = (img_shape[2], img_shape[0], img_shape[1])
+		CNN = ResnetBuilder.build(channel_first_shape, num_classes, "bottleneck", [2, 2, 2, 2], activation="sigmoid")
 	else:
 		CNN = classifier(input_shape=img_shape, num_classes=num_classes, net_width_level=net_width_level)
-	CNN.compile(optimizer=RMSprop(lr=learning_rate, decay=decay_rate, clipnorm=1., clipvalue=0.5), 
-			loss="categorical_crossentropy",
-			metrics=["categorical_accuracy"])
+	CNN.compile(optimizer=RMSprop(lr=learning_rate), 
+			loss="binary_crossentropy", # not mutually exclusive classes, independent per-class distributions
+			metrics=["categorical_accuracy"]) # only after a masterprint multiple classes can be activated
 			
 	# Eventually load pre-trained weights
 	if load_path:
 		CNN.load_weights(load_path)
-
+		
 	# Initialize a Summary writer
-	summary_writer = tf.summary.FileWriter(os.path.join(log_dir, 'summary'))
+	logger = Logger(os.path.join(log_dir, 'summary'))
 	
 	# Training
 	for e in range(1, nb_epoch+1):
@@ -162,8 +160,6 @@ if __name__ == '__main__':
 			# Load the batch of images
 			X_batch, Y_batch = gen_batch.next()
 			Y_batch = to_categorical(Y_batch, num_classes)
-			if use_resnet:
-				X_batch = zoom(X_batch, zoom=(1, 224./img_shape[0], 224./img_shape[1], 3), order=0, prefilter=False)
 			# Update the CNN
 			CNN.train_on_batch(X_batch, Y_batch)
 
@@ -182,8 +178,6 @@ if __name__ == '__main__':
 				# Load the batch of images
 				X_batch, Y_batch = gen_batch.next()
 				Y_batch = to_categorical(Y_batch, num_classes)
-				if use_resnet:
-					X_batch = zoom(X_batch, zoom=(1, 224./img_shape[0], 224./img_shape[1], 3), order=0, prefilter=False)
 				# Generate prediction
 				loc_loss, loc_accuracy = CNN.test_on_batch(X_batch, Y_batch)
 				loss += loc_loss
@@ -191,12 +185,9 @@ if __name__ == '__main__':
 			loss /= n_batch_per_epoch
 			accuracy /= n_batch_per_epoch
 			# Write summary to file
-			summary_values = [
-				tf.Summary.Value(tag="Evaluation/accuracy", simple_value=accuracy*100.0),
-				tf.Summary.Value(tag="Evaluation/loss", simple_value=loss)]
-			summary = tf.Summary(value=summary_values)
-			summary_writer.add_summary(summary, global_step=e)
-			summary_writer.flush()
+			logger.log_scalar("Evaluation/accuracy", accuracy*100.0, e)
+			logger.log_scalar("Evaluation/loss", loss, e)
+
 		# Save model weights (every *** epochs)
 		if(e % args["save_epochs"] == 0):
 			CNN.save_weights(os.path.join(log_dir, 'CNN_save.h5'), overwrite=True)

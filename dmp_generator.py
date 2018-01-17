@@ -22,6 +22,7 @@ import progressbar
 # Files
 import nistdata
 import utils
+from tensorboard_logging import Logger
 
 
 #DCGAN
@@ -125,7 +126,7 @@ if __name__ == '__main__':
 	parser.add_argument("in", help="Full path to the input database directory")
 	parser.add_argument("out", help="Name of the output folder, created in the current directory")
 	parser.add_argument("--load", help="Name of the folder containing the pre-trained model")
-	parser.add_argument("-E", "--epochs", default=600, type=int, help="Number of training steps")
+	parser.add_argument("-E", "--epochs", default=2000, type=int, help="Number of training steps")
 	parser.add_argument("--batch-size", default=64, type=int, help="Number of images to feed per iteration")
 	parser.add_argument("--img-size", default=(128, 128, 1), 
 		type=lambda strin: tuple(int(val) for val in strin.split('x')),
@@ -178,9 +179,7 @@ if __name__ == '__main__':
 	discriminator_model.trainable = False
 	dcgan_model.compile(loss=wasserstein, optimizer=rmsprop)
 	discriminator_model.trainable = True
-	generator_model.trainable = False
 	discriminator_model.compile(loss=wasserstein, optimizer=rmsprop)
-	generator_model.trainable = True
 	# Eventually load weights
 	if load_dir:
 		utils.loadModelWeights(generator_model, discriminator_model, load_dir)
@@ -194,77 +193,73 @@ if __name__ == '__main__':
 	gen_batch = datagen.flow_random(X = X_train, batch_size = batch_size)
 	
 	# Initialize a Summary writer
-	summary_writer = tf.summary.FileWriter(os.path.join(log_dir, 'summary'))
+	logger = Logger(os.path.join(log_dir, 'summary'))
 
 	# Training
 	for e in range(1, nb_epoch+1):
 		# Compute the number of batch per epoch
 		n_batch_per_epoch = math.ceil(nb_img / batch_size)
 		epoch_size = n_batch_per_epoch * batch_size
+		# Many critic updates at the beginning
+		if (e < 25 and not load_dir) or e % 500 == 0:
+			disc_iterations = 100
+		else:
+			disc_iterations = discriminator_iterations
 		# Initialize the progress bar
-		pbDiscText = progressbar.widgets.FormatCustomText('Disc %(it)d/%(tot)d', dict(it=1, tot=100))
-		pb = progressbar.ProgressBar(widgets=[
-				'Epoch '+str(e)+'/'+str(nb_epoch)+' ',
-				progressbar.widgets.SimpleProgress(format=u'Batch %(value_s)s/%(max_value_s)s'), ' ',
-				pbDiscText, ' ',
-				progressbar.widgets.Bar(marker=u'\u2588'), ' ',
-				progressbar.widgets.Timer(), ' ',
-				progressbar.widgets.AdaptiveETA()])
+		pb = progressbar.ProgressBar(max_value=disc_iterations+1,
+			widgets=['Epoch '+str(e)+'/'+str(nb_epoch)+' ',
+					progressbar.widgets.SimpleProgress(format=u'Steps %(value_s)s/%(max_value_s)s'), ' ',
+					progressbar.widgets.Bar(marker=u'\u2588'), ' ',
+					progressbar.widgets.Timer(), ' ',
+					progressbar.widgets.AdaptiveETA()])
 
-		for batch_counter in pb(range(n_batch_per_epoch)):
-			########## 1) Train the critic / discriminator ############
-			list_disc_loss_real = []
-			list_disc_loss_gen = []
-			# Many critic updates at the beginning
-			if (batch_counter < 25 and not load_dir) or batch_counter % 500 == 0:
-				disc_iterations = 100
-			else:
-				disc_iterations = discriminator_iterations
-			for disc_it in range(disc_iterations):
-				pbDiscText.update_mapping(it=disc_it+1, tot=disc_iterations)
-				# Clip discriminator weights
-				for l in discriminator_model.layers:
-					weights = l.get_weights()
-					weights = [np.clip(w, clamp_lower, clamp_upper) for w in weights]
-					l.set_weights(weights)
-				# Load the batch of images
-				X_real_batch = gen_batch.next()
-				# Create the fake images
-				noise_input = sample_noise(noise_dim, batch_size, noise_scale)
-				X_disc_gen = generator_model.predict(noise_input)
-				# Update the discriminator
-				disc_loss_real = discriminator_model.train_on_batch(X_real_batch, -np.ones(X_real_batch.shape[0]))
-				disc_loss_gen = discriminator_model.train_on_batch(X_disc_gen, np.ones(X_disc_gen.shape[0]))
-				list_disc_loss_real.append(disc_loss_real)
-				list_disc_loss_gen.append(disc_loss_gen)
+		########## 1) Train the critic / discriminator ############
+		list_disc_loss_real = []
+		list_disc_loss_gen = []
+		for disc_it in range(disc_iterations):
+			# Clip discriminator weights
+			for l in discriminator_model.layers:
+				weights = l.get_weights()
+				weights = [np.clip(w, clamp_lower, clamp_upper) for w in weights]
+				l.set_weights(weights)
+			# Load the batch of images
+			X_real_batch = gen_batch.next()
+			# Create the fake images
+			noise_input = sample_noise(noise_dim, batch_size, noise_scale)
+			X_disc_gen = generator_model.predict(noise_input)
+			# Update the discriminator
+			disc_loss_real = discriminator_model.train_on_batch(X_real_batch, -np.ones(X_real_batch.shape[0]))
+			disc_loss_gen = discriminator_model.train_on_batch(X_disc_gen, np.ones(X_disc_gen.shape[0]))
+			list_disc_loss_real.append(disc_loss_real)
+			list_disc_loss_gen.append(disc_loss_gen)
+			# Update progressbar
+			pb.update(disc_it)
+		
+		########## 2) Train the generator ############
+		X_gen = sample_noise(noise_dim, batch_size, noise_scale)
+		# Freeze the discriminator
+		discriminator_model.trainable = False
+		gen_loss = dcgan_model.train_on_batch(X_gen, -np.ones(batch_size))
+		# Unfreeze the discriminator
+		discriminator_model.trainable = True
+		# Update progressbar
+		pb.update(disc_iterations+1)
+		pb.finish()
+
+		# Compute losses (earlier it was -loss)
+		lossD = np.mean(list_disc_loss_real) + np.mean(list_disc_loss_gen) #-6*np.mean(list_disc_loss)
+		lossG = gen_loss
 			
-			########## 2) Train the generator ############
-			X_gen = sample_noise(noise_dim, batch_size, noise_scale)
-			# Freeze the discriminator
-			discriminator_model.trainable = False
-			gen_loss = dcgan_model.train_on_batch(X_gen, -np.ones(batch_size))
-			# Unfreeze the discriminator
-			discriminator_model.trainable = True
-
-			# Compute losses
-			lossD = -np.mean(list_disc_loss_real) - np.mean(list_disc_loss_gen) #-6*np.mean(list_disc_loss)
-			lossG = -gen_loss
+		# Summary operations every *** epochs
+		if e % args["summary_epochs"] == 0:
+			fake_images = generator_model.predict(sample_noise(noise_dim, 4, noise_scale))
+			fake_images = [np.squeeze(np.array(img)) for img in fake_images.tolist()]
+			true_images = [np.squeeze(np.array(img)) for img in X_real_batch[:4,:,:,:].tolist()]
+			logger.log_scalar("Evaluation/lossD", lossD, e)
+			logger.log_scalar("Evaluation/lossG", lossG, e)
+			logger.log_images("Evaluation/fake_images", fake_images, e)
+			logger.log_images("Evaluation/true_images", true_images, e)
 			
-			# Summary operations every *** epochs
-			if(batch_counter==n_batch_per_epoch-1 and e % args["summary_epochs"] == 0):
-				with tf.Session() as sess:
-					tf.summary.image("Evaluation/fake_images", X_gen, max_outputs=4)
-					tf.summary.image("Evaluation/true_images", X_real_batch, max_outputs=4)
-					tf.summary.scalar("Evaluation/lossD", lossD)
-					tf.summary.scalar("Evaluation/lossG", lossG)
-					summary_op = tf.summary.merge_all()
-					summary = sess.run(summary_op)
-					summary_writer.add_summary(summary, global_step=e)
-					summary_writer.flush()
-			# Save images for visualization every 5 batches
-			if batch_counter % 5 == 0:
-				utils.plotGeneratedBatch(X_real_batch, X_disc_gen, os.path.join(log_dir, 'currentSample.png'))
-
 		# Save model weights (every *** epochs)
-		if(e % args["save_epochs"] == 0):
+		if e % args["save_epochs"] == 0:
 			utils.saveModelWeights(generator_model, discriminator_model, log_dir)
