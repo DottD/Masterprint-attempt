@@ -87,7 +87,7 @@ if __name__ == '__main__':
 		help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
 	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
-	parser.add_argument("--learning-rate", default=5E-5, type=float, help="Learning rate for Adam optimizer")
+	parser.add_argument("--learning-rate", default=5E-6, type=float, help="Learning rate for Adam optimizer")
 	parser.add_argument("--model-complexity", default=4, type=int, help="Complexity level of the simpler classifier")
 	parser.add_argument("--resnet", action="store_true", default=False, help="Whether to use the ResNet50 classifier or a simpler one")
 	args = vars(parser.parse_args())
@@ -128,7 +128,7 @@ if __name__ == '__main__':
 	if use_resnet:
 		# resnet18 with sigmoid final activation layer
 		channel_first_shape = (img_shape[2], img_shape[0], img_shape[1])
-		CNN = ResnetBuilder.build(channel_first_shape, num_classes, "bottleneck", [2, 2, 2, 2], activation="sigmoid")
+		CNN = ResnetBuilder.build(channel_first_shape, num_classes, "bottleneck", [3, 4, 6, 3], activation="sigmoid")
 	else:
 		CNN = classifier(input_shape=img_shape, num_classes=num_classes, net_width_level=net_width_level)
 	CNN.compile(optimizer=RMSprop(lr=learning_rate), 

@@ -133,7 +133,8 @@ if __name__ == '__main__':
 	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
 	parser.add_argument("--noise-length", default=100, type=int, help="Total number of people enrolled in the dataset")
-	parser.add_argument("--learning-rate", default=5e-5, type=float, help="Learning Rate")
+	parser.add_argument("--learning-rate", default=5e-6, type=float, help="Learning Rate")
+	parser.add_argument("--decay-rate", default=0.01, type=float, help="Decay Rate")
 	parser.add_argument("--disc-train-steps", default=5, type=int, help="Number of iterations of the critic per generator iteration")
 	args = vars(parser.parse_args())
 	print('------')
@@ -145,6 +146,7 @@ if __name__ == '__main__':
 	noise_dim = args["noise_length"]
 	img_size = args["img_size"][0]
 	learning_rate = args["learning_rate"]
+	decay_rate = args["decay_rate"]
 	nb_epoch = args["epochs"]
 	batch_size = args["batch_size"]
 	discriminator_iterations = args["disc_train_steps"]
@@ -162,6 +164,14 @@ if __name__ == '__main__':
 		os.makedirs(log_dir)
 	print('Logs will be summarized in ' + log_dir)
 		
+	# Load data
+	def tanh_transform(x):
+		return x*2/255 - 1
+	X_train, Y_train = nistdata.load_data(s = 256, dirname = db_path)
+	nb_img = X_train.shape[0]
+	datagen = nistdata.DataGenerator(crop_size=img_size, preprocessing_function = tanh_transform)
+	gen_batch = datagen.flow_random(X = X_train, batch_size = batch_size)
+	
 	#Input
 	def sample_noise(noise_dim, batch_size, noise_scale):
 		return np.random.normal(scale=noise_scale, size=(batch_size, noise_dim))
@@ -173,7 +183,7 @@ if __name__ == '__main__':
 	discriminator_model = discriminator(img_size)
 	dcgan_model = dcgan(generator_model, discriminator_model, noise_dim)
 	# Compile models
-	rmsprop = RMSprop(lr=learning_rate)
+	rmsprop = RMSprop(lr=learning_rate, decay=decay_rate*batch_size/nb_img)
 	generator_model.compile(loss='mse', optimizer=rmsprop)
 	discriminator_model.trainable = False
 	dcgan_model.compile(loss=wasserstein, optimizer=rmsprop)
@@ -182,14 +192,6 @@ if __name__ == '__main__':
 	# Eventually load weights
 	if load_dir:
 		utils.loadModelWeights(generator_model, discriminator_model, load_dir)
-
-	# Load data
-	def tanh_transform(x):
-		return x*2/255 - 1
-	X_train, Y_train = nistdata.load_data(s = 256, dirname = db_path)
-	nb_img = X_train.shape[0]
-	datagen = nistdata.DataGenerator(crop_size=img_size, preprocessing_function = tanh_transform)
-	gen_batch = datagen.flow_random(X = X_train, batch_size = batch_size)
 	
 	# Initialize a Summary writer
 	logger = Logger(os.path.join(log_dir, 'summary'))
