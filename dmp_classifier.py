@@ -111,7 +111,6 @@ if __name__ == '__main__':
 	out_folder = args["out"] # Name of the folder with training outputs
 	load_path = args["load"]
 	log_dir = os.path.abspath(os.path.join(os.path.dirname(db_path), out_folder))
-	output_log_file = os.path.join(log_dir, 'output.txt')
 	if not os.path.exists(log_dir):
 		os.makedirs(log_dir)
 	print('Logs will be summarized in ' + log_dir)
@@ -187,6 +186,8 @@ if __name__ == '__main__':
 			# Write summary to file
 			logger.log_scalar("Evaluation/accuracy", accuracy*100.0, e)
 			logger.log_scalar("Evaluation/loss", loss, e)
+			weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
+			logger.log_histogram("Model/weights", numpy.array(weights), e)
 
 		# Save model weights (every *** epochs)
 		if(e % args["save_epochs"] == 0):

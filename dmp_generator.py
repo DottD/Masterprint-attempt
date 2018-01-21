@@ -60,7 +60,6 @@ def generator(noise_dim, s):
 	x = Activation("tanh")(x)
 
 	generator_model = Model(inputs=[gen_input], outputs=[x])
-	#visualize_model(generator_model)
 
 	return generator_model
 
@@ -259,6 +258,10 @@ if __name__ == '__main__':
 			logger.log_scalar("Evaluation/lossG", lossG, e)
 			logger.log_images("Evaluation/fake_images", fake_images, e)
 			logger.log_images("Evaluation/true_images", true_images, e)
+			weights = [y for layer in discriminator_model.layers for x in layer.get_weights() for y in x.flatten().tolist()]
+			logger.log_histogram("Discriminator/weights", np.array(weights), e)
+			weights = [y for layer in generator_model.layers for x in layer.get_weights() for y in x.flatten().tolist()]
+			logger.log_histogram("Generator/weights", np.array(weights), e)
 			
 		# Save model weights (every *** epochs)
 		if e % args["save_epochs"] == 0:
