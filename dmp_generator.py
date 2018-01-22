@@ -185,10 +185,10 @@ if __name__ == '__main__':
 			layer.trainable = trainable
 	# Create models
 	G = generator(noise_dim,img_size)
-	G.compile(loss='mse', optimizer=RMSprop(lr=learning_rate, decay=decay_rate*batch_size/nb_img))
+	G.compile(loss='mse', optimizer=RMSprop(lr=learning_rate, decay=decay_rate))
 	
 	D = discriminator(img_size)
-	D.compile(loss=wasserstein, optimizer=RMSprop(lr=learning_rate, decay=decay_rate*batch_size/nb_img))
+	D.compile(loss=wasserstein, optimizer=RMSprop(lr=learning_rate, decay=decay_rate/25))
 	
 	DCGAN = dcgan(G, D, noise_dim)
 	set_trainability(D, False)
