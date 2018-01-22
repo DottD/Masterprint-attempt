@@ -87,9 +87,9 @@ if __name__ == '__main__':
 		help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
 	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
-	parser.add_argument("--learning-rate", default=5E-6, type=float, help="Learning rate for Adam optimizer")
+	parser.add_argument("--learning-rate", default=5E-7, type=float, help="Learning rate for Adam optimizer")
 	parser.add_argument("--model-complexity", default=4, type=int, help="Complexity level of the simpler classifier")
-	parser.add_argument("--resnet", action="store_true", default=False, help="Whether to use the ResNet50 classifier or a simpler one")
+	parser.add_argument("--custom", action="store_false", default=True, help="Whether to use the ResNet50 classifier or a simpler one")
 	args = vars(parser.parse_args())
 	print('------')
 	print("Parameters:")
@@ -104,7 +104,7 @@ if __name__ == '__main__':
 	batch_size = args["batch_size"]
 	learning_rate = args["learning_rate"]
 	net_width_level = args["model_complexity"]
-	use_resnet = args["resnet"]
+	use_resnet = args["custom"]
 
 	# I/O Folders
 	db_path = os.path.abspath(os.path.normpath(args["in"])) # Path to the database folder
@@ -143,53 +143,56 @@ if __name__ == '__main__':
 	logger = Logger(os.path.join(log_dir, 'summary'))
 	
 	# Training
-	for e in range(1, nb_epoch+1):
-		# Compute the number of batch per epoch
-		n_batch_per_epoch = math.ceil(nb_img / batch_size)
-		epoch_size = n_batch_per_epoch * batch_size
-		# Initialize the progress bar
-		pb = progressbar.ProgressBar(widgets=[
-				'Epoch '+str(e)+'/'+str(nb_epoch)+' ',
-				progressbar.widgets.SimpleProgress(format=u'Batch %(value_s)s/%(max_value_s)s'), ' ',
-				progressbar.widgets.Bar(marker=u'\u2588'), ' ',
-				progressbar.widgets.Timer(), ' ',
-				progressbar.widgets.AdaptiveETA()])
-		
-		for batch_counter in pb(range(n_batch_per_epoch)):
-			# Load the batch of images
-			X_batch, Y_batch = gen_batch.next()
-			Y_batch = to_categorical(Y_batch, num_classes)
-			# Update the CNN
-			CNN.train_on_batch(X_batch, Y_batch)
-
-		# Print epoch summary (every *** epochs)
-		if(e % args["summary_epochs"] == 0):
+	try:
+		for e in range(1, nb_epoch+1):
+			# Compute the number of batch per epoch
+			n_batch_per_epoch = math.ceil(nb_img / batch_size)
+			epoch_size = n_batch_per_epoch * batch_size
+			# Initialize the progress bar
 			pb = progressbar.ProgressBar(widgets=[
-					' -- Evaluation ',
+					'Epoch '+str(e)+'/'+str(nb_epoch)+' ',
 					progressbar.widgets.SimpleProgress(format=u'Batch %(value_s)s/%(max_value_s)s'), ' ',
 					progressbar.widgets.Bar(marker=u'\u2588'), ' ',
 					progressbar.widgets.Timer(), ' ',
 					progressbar.widgets.AdaptiveETA()])
-			# Evaluate the model
-			accuracy = 0.0
-			loss = 0.0
+			
 			for batch_counter in pb(range(n_batch_per_epoch)):
 				# Load the batch of images
 				X_batch, Y_batch = gen_batch.next()
 				Y_batch = to_categorical(Y_batch, num_classes)
-				# Generate prediction
-				loc_loss, loc_accuracy = CNN.test_on_batch(X_batch, Y_batch)
-				loss += loc_loss
-				accuracy += loc_accuracy
-			loss /= n_batch_per_epoch
-			accuracy /= n_batch_per_epoch
-			# Write summary to file
-			logger.log_scalar("Evaluation/accuracy", accuracy*100.0, e)
-			logger.log_scalar("Evaluation/loss", loss, e)
-			weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
-			logger.log_histogram("Model/weights", weights, e)
-			logger.log_histogram("Model/weights_no_outlier", weights, e, keep=95)
+				# Update the CNN
+				CNN.train_on_batch(X_batch, Y_batch)
 
-		# Save model weights (every *** epochs)
-		if(e % args["save_epochs"] == 0):
-			CNN.save(os.path.join(log_dir, 'CNN_save.h5'), overwrite=True)
+			# Save model weights (every *** epochs)
+			if(e % args["save_epochs"] == 0):
+				CNN.save(os.path.join(log_dir, 'CNN_save.h5'), overwrite=True)
+
+			# Print epoch summary (every *** epochs)
+			if(e % args["summary_epochs"] == 0):
+				pb = progressbar.ProgressBar(widgets=[
+						' -- Evaluation ',
+						progressbar.widgets.SimpleProgress(format=u'Batch %(value_s)s/%(max_value_s)s'), ' ',
+						progressbar.widgets.Bar(marker=u'\u2588'), ' ',
+						progressbar.widgets.Timer(), ' ',
+						progressbar.widgets.AdaptiveETA()])
+				# Evaluate the model
+				accuracy = 0.0
+				loss = 0.0
+				for batch_counter in pb(range(n_batch_per_epoch)):
+					# Load the batch of images
+					X_batch, Y_batch = gen_batch.next()
+					Y_batch = to_categorical(Y_batch, num_classes)
+					# Generate prediction
+					loc_loss, loc_accuracy = CNN.test_on_batch(X_batch, Y_batch)
+					loss += loc_loss
+					accuracy += loc_accuracy
+				loss /= n_batch_per_epoch
+				accuracy /= n_batch_per_epoch
+				# Write summary to file
+				logger.log_scalar("Evaluation/accuracy", accuracy*100.0, e)
+				logger.log_scalar("Evaluation/loss", loss, e)
+				weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
+				logger.log_histogram("Model/weights", weights, e)
+				logger.log_histogram("Model/weights_no_outlier", weights, e, keep=95)
+	except KeyboardInterrupt:
+		print("The user interrupted the training.")
