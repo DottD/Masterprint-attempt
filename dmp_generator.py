@@ -59,9 +59,9 @@ def generator(noise_dim, s):
 	x = Conv2D(output_channels, kernel_size=(3, 3), padding="same")(x)
 	x = Activation("tanh")(x)
 
-	generator_model = Model(inputs=[gen_input], outputs=[x])
+	G = Model(inputs=[gen_input], outputs=[x])
 
-	return generator_model
+	return G
 
 def discriminator(s):
 	#s: width of square image output
@@ -100,9 +100,9 @@ def discriminator(s):
 	x = AveragePooling2D(pool_size=(4, 4))(x)
 	x = Flatten()(x)
 
-	discriminator_model = Model(inputs=[disc_input], outputs=[x])
+	D = Model(inputs=[disc_input], outputs=[x])
 
-	return discriminator_model
+	return D
 
 def dcgan(generator, discriminator, noise_dim):
 	#generator: keras generator model
@@ -177,96 +177,112 @@ if __name__ == '__main__':
 		return np.random.normal(scale=noise_scale, size=(batch_size, noise_dim))
 	#Loss
 	def wasserstein(y_true, y_pred):
-		return K.mean(y_true * y_pred)
+		return -K.mean(y_true * y_pred)
+	# Useful function
+	def set_trainability(model, trainable=False):
+		model.trainable = trainable
+		for layer in model.layers:
+			layer.trainable = trainable
 	# Create models
-	generator_model = generator(noise_dim,img_size)
-	discriminator_model = discriminator(img_size)
-	dcgan_model = dcgan(generator_model, discriminator_model, noise_dim)
-	# Compile models
-	rmsprop = RMSprop(lr=learning_rate, decay=decay_rate*batch_size/nb_img)
-	generator_model.compile(loss='mse', optimizer=rmsprop)
-	discriminator_model.trainable = False
-	dcgan_model.compile(loss=wasserstein, optimizer=rmsprop)
-	discriminator_model.trainable = True
-	discriminator_model.compile(loss=wasserstein, optimizer=rmsprop)
+	G = generator(noise_dim,img_size)
+	G.compile(loss='mse', optimizer=RMSprop(lr=learning_rate, decay=decay_rate*batch_size/nb_img))
+	
+	D = discriminator(img_size)
+	D.compile(loss=wasserstein, optimizer=RMSprop(lr=learning_rate, decay=decay_rate*batch_size/nb_img))
+	
+	DCGAN = dcgan(G, D, noise_dim)
+	set_trainability(D, False)
+	DCGAN.compile(loss=wasserstein, optimizer=G.optimizer)
+	
 	# Eventually load weights
 	if load_dir:
-		utils.loadModelWeights(generator_model, discriminator_model, load_dir)
+		utils.loadModelWeights(G, D, load_dir)
 	
 	# Initialize a Summary writer
 	logger = Logger(os.path.join(log_dir, 'summary'))
 
 	# Training
-	for e in range(1, nb_epoch+1):
-		# Compute the number of batch per epoch
-		n_batch_per_epoch = math.ceil(nb_img / batch_size)
-		epoch_size = n_batch_per_epoch * batch_size
-		# Many critic updates at the beginning
-		if (e < 25 and not load_dir) or e % 500 == 0:
-			disc_iterations = 100
-		else:
-			disc_iterations = discriminator_iterations
-		# Initialize the progress bar
-		pb = progressbar.ProgressBar(max_value=disc_iterations+1,
-			widgets=['Epoch '+str(e)+'/'+str(nb_epoch)+' ',
-					progressbar.widgets.SimpleProgress(format=u'Steps %(value_s)s/%(max_value_s)s'), ' ',
-					progressbar.widgets.Bar(marker=u'\u2588'), ' ',
-					progressbar.widgets.Timer(), ' ',
-					progressbar.widgets.AdaptiveETA()])
+	try:
+		for e in range(1, nb_epoch+1):
+			# Compute the number of batch per epoch
+			n_batch_per_epoch = math.ceil(nb_img / batch_size)
+			epoch_size = n_batch_per_epoch * batch_size
+			# Many critic updates at the beginning
+			if (e < 25 and not load_dir) or e % 500 == 0:
+				disc_iterations = 100
+			else:
+				disc_iterations = discriminator_iterations
+			# Initialize the progress bar
+			pb = progressbar.ProgressBar(max_value=disc_iterations+1,
+				widgets=['Epoch '+str(e)+'/'+str(nb_epoch)+' ',
+						progressbar.widgets.SimpleProgress(format=u'Steps %(value_s)s/%(max_value_s)s'), ' ',
+						progressbar.widgets.Bar(marker=u'\u2588'), ' ',
+						progressbar.widgets.Timer(), ' ',
+						progressbar.widgets.AdaptiveETA()])
 
-		########## 1) Train the critic / discriminator ############
-		list_disc_loss_real = []
-		list_disc_loss_gen = []
-		for disc_it in range(disc_iterations):
-			# Clip discriminator weights
-			for l in discriminator_model.layers:
-				weights = l.get_weights()
-				weights = [np.clip(w, clamp_lower, clamp_upper) for w in weights]
-				l.set_weights(weights)
-			# Load the batch of images
-			X_real_batch = gen_batch.next()
-			# Create the fake images
-			noise_input = sample_noise(noise_dim, batch_size, noise_scale)
-			X_disc_gen = generator_model.predict(noise_input)
-			# Update the discriminator
-			disc_loss_real = discriminator_model.train_on_batch(X_real_batch, -np.ones(X_real_batch.shape[0]))
-			disc_loss_gen = discriminator_model.train_on_batch(X_disc_gen, np.ones(X_disc_gen.shape[0]))
-			list_disc_loss_real.append(disc_loss_real)
-			list_disc_loss_gen.append(disc_loss_gen)
+			########## 1) Train the critic / discriminator ############
+			# Initialize the labels [Y_fake, Y_real]
+			Y_real = np.ones(batch_size)
+			Y_fake = -Y_real
+			Y = np.concatenate([Y_real, Y_fake], axis=0)
+			# Initializations
+			lossD = []
+			set_trainability(D, True)
+			for _ in range(disc_iterations):
+				# Clip discriminator weights
+				for l in D.layers:
+					weights = l.get_weights()
+					weights = [np.clip(w, clamp_lower, clamp_upper) for w in weights]
+					l.set_weights(weights)
+				# Load the batch of images
+				X_real = gen_batch.next()
+				# Create the fake images
+				noise_input = sample_noise(noise_dim, batch_size, noise_scale)
+				X_fake = G.predict(noise_input)
+				# Create the batch
+				X = np.concatenate([X_real, X_fake], axis=0)
+				# Update the discriminator
+				lossD.append(D.train_on_batch(X, Y))
+				# Update progressbar
+				pb.update(_)
+			set_trainability(D, False)
+			# Compute the total loss
+			lossD = np.mean(lossD)
+			
+			########## 2) Train the generator ############
+			X = sample_noise(noise_dim, batch_size, noise_scale)
+			lossG = DCGAN.train_on_batch(X, Y_real)
 			# Update progressbar
-			pb.update(disc_it)
+			pb.update(disc_iterations+1)
+			pb.finish()
+				
+			# Summary operations every *** epochs
+			if e % args["summary_epochs"] == 0:
+				n_img = 4
+				X = sample_noise(noise_dim, n_img, noise_scale)
+				X_fake = G.predict(X)
+				X_fake = [np.squeeze(np.array(img)) for img in X_fake.tolist()]
+				X_real = [np.squeeze(np.array(img)) for img in X_real[:n_img,:,:,:].tolist()]
+				def loss2acc(loss):
+					# Loss is in [-1,1] where -1 stands for "perfectly-trained"
+					return (-loss + 1.) / 2. * 100.
+				logger.log_scalar("Evaluation/lossD", lossD, e)
+				logger.log_scalar("Evaluation/lossG", lossG, e)
+				logger.log_scalar("Evaluation/accuracyD", loss2acc(lossD), e)
+				logger.log_scalar("Evaluation/accuracyG", loss2acc(lossG), e)
+				logger.log_images("Evaluation/fake_images", X_fake, e)
+				logger.log_images("Evaluation/real_images", X_real, e)
+				weights = [y for layer in D.layers for x in layer.get_weights() for y in x.flatten().tolist()]
+				logger.log_histogram("Discriminator/weights", weights, e)
+				logger.log_histogram("Discriminator/weights_no_outliers", weights, e, keep=95)
+				weights = [y for layer in G.layers for x in layer.get_weights() for y in x.flatten().tolist()]
+				logger.log_histogram("Generator/weights", weights, e)
+				logger.log_histogram("Generator/weights_no_outliers", weights, e, keep=95)
+				
+			# Save model weights (every *** epochs)
+			if e % args["save_epochs"] == 0:
+				utils.saveModelWeights(G, D, log_dir)
+	
+	except KeyboardInterrupt:
+		print("The user interrupted the training.")
 		
-		########## 2) Train the generator ############
-		X_gen = sample_noise(noise_dim, batch_size, noise_scale)
-		# Freeze the discriminator
-		discriminator_model.trainable = False
-		gen_loss = dcgan_model.train_on_batch(X_gen, -np.ones(batch_size))
-		# Unfreeze the discriminator
-		discriminator_model.trainable = True
-		# Update progressbar
-		pb.update(disc_iterations+1)
-		pb.finish()
-
-		# Compute losses (earlier it was -loss)
-		lossD = np.mean(list_disc_loss_real) + np.mean(list_disc_loss_gen) #-6*np.mean(list_disc_loss)
-		lossG = gen_loss
-			
-		# Summary operations every *** epochs
-		if e % args["summary_epochs"] == 0:
-			fake_images = generator_model.predict(sample_noise(noise_dim, 4, noise_scale))
-			fake_images = [np.squeeze(np.array(img)) for img in fake_images.tolist()]
-			true_images = [np.squeeze(np.array(img)) for img in X_real_batch[:4,:,:,:].tolist()]
-			logger.log_scalar("Evaluation/lossD", lossD, e)
-			logger.log_scalar("Evaluation/lossG", lossG, e)
-			logger.log_images("Evaluation/fake_images", fake_images, e)
-			logger.log_images("Evaluation/true_images", true_images, e)
-			weights = [y for layer in discriminator_model.layers for x in layer.get_weights() for y in x.flatten().tolist()]
-			logger.log_histogram("Discriminator/weights", weights, e)
-			logger.log_histogram("Discriminator/weights_no_outlier", weights, e, keep=95)
-			weights = [y for layer in generator_model.layers for x in layer.get_weights() for y in x.flatten().tolist()]
-			logger.log_histogram("Generator/weights", weights, e)
-			logger.log_histogram("Generator/weights_no_outlier", weights, e, keep=95)
-			
-		# Save model weights (every *** epochs)
-		if e % args["save_epochs"] == 0:
-			utils.saveModelWeights(generator_model, discriminator_model, log_dir)
