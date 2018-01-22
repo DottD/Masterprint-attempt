@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy
 from keras.applications.resnet50 import ResNet50
-from keras.models import Sequential, Model
+from keras.models import Sequential, Model, load_model
 from keras.layers import Conv2D, Flatten, Dense
 from keras.regularizers import l2
 from keras.optimizers import RMSprop
@@ -123,21 +123,21 @@ if __name__ == '__main__':
 	num_classes = Y_train.max()+1
 	datagen = nistdata.DataGenerator(crop_size=img_size, preprocessing_function=tanh_transform)
 	gen_batch = datagen.flow_random(X=X_train, y=Y_train, batch_size=batch_size)
-
-	# Create and compile models
-	if use_resnet:
-		# resnet18 with sigmoid final activation layer
-		channel_first_shape = (img_shape[2], img_shape[0], img_shape[1])
-		CNN = ResnetBuilder.build(channel_first_shape, num_classes, "bottleneck", [3, 4, 6, 3], activation="sigmoid")
-	else:
-		CNN = classifier(input_shape=img_shape, num_classes=num_classes, net_width_level=net_width_level)
-	CNN.compile(optimizer=RMSprop(lr=learning_rate), 
-			loss="binary_crossentropy", # not mutually exclusive classes, independent per-class distributions
-			metrics=["categorical_accuracy"]) # only after a masterprint multiple classes can be activated
 			
 	# Eventually load pre-trained weights
 	if load_path:
-		CNN.load_weights(load_path)
+		CNN = load_model(load_path)
+	else:
+		# Create and compile models
+		if use_resnet:
+			# resnet18 with sigmoid final activation layer
+			channel_first_shape = (img_shape[2], img_shape[0], img_shape[1])
+			CNN = ResnetBuilder.build(channel_first_shape, num_classes, "bottleneck", [3, 4, 6, 3], activation="sigmoid")
+		else:
+			CNN = classifier(input_shape=img_shape, num_classes=num_classes, net_width_level=net_width_level)
+		CNN.compile(optimizer=RMSprop(lr=learning_rate), 
+				loss="binary_crossentropy", # not mutually exclusive classes, independent per-class distributions
+				metrics=["categorical_accuracy"]) # only after a masterprint multiple classes can be activated
 		
 	# Initialize a Summary writer
 	logger = Logger(os.path.join(log_dir, 'summary'))
@@ -192,4 +192,4 @@ if __name__ == '__main__':
 
 		# Save model weights (every *** epochs)
 		if(e % args["save_epochs"] == 0):
-			CNN.save_weights(os.path.join(log_dir, 'CNN_save.h5'), overwrite=True)
+			CNN.save(os.path.join(log_dir, 'CNN_save.h5'), overwrite=True)
