@@ -57,10 +57,20 @@ class Logger(object):
 		self.writer.flush()
 		
 
-	def log_histogram(self, tag, values, step, bins=1000):
-		"""Logs the histogram of a list/vector of values."""
+	def log_histogram(self, tag, values, step, bins=1000, keep=None):
+		"""Logs the histogram of a list/vector of values.
+		Args:
+			- keep: float in [0,100] indicating the percentage of elements to keep (remove outlier)
+					(None, default, means no outlier removal)
+		"""
 		# Convert to a numpy array
 		values = np.array(values)
+		
+		# Remove outliers
+		if keep is not None:
+			distance = np.abs(values-values.mean())
+			t = np.percentile(distance, keep)
+			values = values[distance <= t]
 		
 		# Create histogram using numpy        
 		counts, bin_edges = np.histogram(values, bins=bins)

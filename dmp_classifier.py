@@ -187,7 +187,8 @@ if __name__ == '__main__':
 			logger.log_scalar("Evaluation/accuracy", accuracy*100.0, e)
 			logger.log_scalar("Evaluation/loss", loss, e)
 			weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
-			logger.log_histogram("Model/weights", numpy.array(weights), e)
+			logger.log_histogram("Model/weights", weights, e)
+			logger.log_histogram("Model/weights_no_outlier", weights, e, keep=95)
 
 		# Save model weights (every *** epochs)
 		if(e % args["save_epochs"] == 0):

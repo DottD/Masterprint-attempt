@@ -261,9 +261,11 @@ if __name__ == '__main__':
 			logger.log_images("Evaluation/fake_images", fake_images, e)
 			logger.log_images("Evaluation/true_images", true_images, e)
 			weights = [y for layer in discriminator_model.layers for x in layer.get_weights() for y in x.flatten().tolist()]
-			logger.log_histogram("Discriminator/weights", np.array(weights), e)
+			logger.log_histogram("Discriminator/weights", weights, e)
+			logger.log_histogram("Discriminator/weights_no_outlier", weights, e, keep=95)
 			weights = [y for layer in generator_model.layers for x in layer.get_weights() for y in x.flatten().tolist()]
-			logger.log_histogram("Generator/weights", np.array(weights), e)
+			logger.log_histogram("Generator/weights", weights, e)
+			logger.log_histogram("Generator/weights_no_outlier", weights, e, keep=95)
 			
 		# Save model weights (every *** epochs)
 		if e % args["save_epochs"] == 0:
