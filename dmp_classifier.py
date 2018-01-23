@@ -130,7 +130,7 @@ if __name__ == '__main__':
 	else:
 		# Create and compile models
 		if use_resnet:
-			# resnet18 with sigmoid final activation layer
+			# resnet34 with sigmoid final activation layer
 			channel_first_shape = (img_shape[2], img_shape[0], img_shape[1])
 			CNN = ResnetBuilder.build(channel_first_shape, num_classes, "bottleneck", [3, 4, 6, 3], activation="sigmoid")
 		else:

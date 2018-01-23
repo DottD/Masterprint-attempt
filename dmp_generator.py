@@ -236,13 +236,15 @@ if __name__ == '__main__':
 					l.set_weights(weights)
 				# Load the batch of images
 				X_real = gen_batch.next()
+				# The last batch will be shorter
+				N = X_real.shape[0]
 				# Create the fake images
-				noise_input = sample_noise(noise_dim, batch_size, noise_scale)
+				noise_input = sample_noise(noise_dim, N, noise_scale)
 				X_fake = G.predict(noise_input)
 				# Create the batch
 				X = np.concatenate([X_real, X_fake], axis=0)
 				# Update the discriminator
-				lossD.append(D.train_on_batch(X, Y))
+				lossD.append(D.train_on_batch(X, Y[:X.shape[0]]))
 				# Update progressbar
 				pb.update(_)
 			set_trainability(D, False)
