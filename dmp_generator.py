@@ -6,23 +6,24 @@ from keras.models import Model
 from keras.layers import Input
 from keras import initializers
 from keras.utils import generic_utils, np_utils
-from keras.optimizers import RMSprop
+from keras.optimizers import Adam, SGD
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.normalization import BatchNormalization
 from keras.layers.core import Flatten, Dense, Activation, Reshape
 from keras.layers.convolutional import Conv2D, Conv2DTranspose, UpSampling2D
 from keras.layers.pooling import AveragePooling2D
 import matplotlib.pylab as plt
-from PIL import Image
 import time
 import math
 import os
 import argparse
 import progressbar
 # Files
-import nistdata
+from nist_data_provider import NistDataProvider
 import utils
 from tensorboard_logging import Logger
+
+# suggestions from https://github.com/soumith/ganhacks
 
 
 #DCGAN
@@ -44,7 +45,7 @@ def generator(noise_dim, s):
 	x = Dense(f * start_dim * start_dim, use_bias=False)(gen_input)
 	x = Reshape((start_dim, start_dim, f))(x)
 	x = BatchNormalization()(x)
-	x = Activation("relu")(x)
+	x = LeakyReLU(0.2)(x)
 
 	# Transposed conv blocks: Deconv2D->BN->ReLU
 	for i in range(nb_upconv - 1):
@@ -52,7 +53,7 @@ def generator(noise_dim, s):
 		x = UpSampling2D(size=(2,2))(x)
 		x = Conv2D(nb_filters, kernel_size=(3, 3), padding="same")(x)
 		x = BatchNormalization()(x)
-		x = Activation("relu")(x)
+		x = LeakyReLU(0.2)(x)
 
 	# Last block
 	x = UpSampling2D(size=(2,2))(x)
@@ -163,14 +164,6 @@ if __name__ == '__main__':
 	if not os.path.exists(log_dir):
 		os.makedirs(log_dir)
 	print('Logs will be summarized in ' + log_dir)
-		
-	# Load data
-	def tanh_transform(x):
-		return x*2/255 - 1
-	X_train, Y_train = nistdata.load_data(s = 256, dirname = db_path)
-	nb_img = X_train.shape[0]
-	datagen = nistdata.DataGenerator(crop_size=img_size, preprocessing_function = tanh_transform)
-	gen_batch = datagen.flow_random(X = X_train, batch_size = batch_size)
 	
 	#Input
 	def sample_noise(noise_dim, batch_size, noise_scale):
@@ -185,10 +178,10 @@ if __name__ == '__main__':
 			layer.trainable = trainable
 	# Create models
 	G = generator(noise_dim,img_size)
-	G.compile(loss='mse', optimizer=RMSprop(lr=learning_rate, decay=decay_rate))
+	G.compile(loss='mse', optimizer=Adam(lr=learning_rate, decay=decay_rate))
 	
 	D = discriminator(img_size)
-	D.compile(loss=wasserstein, optimizer=RMSprop(lr=learning_rate, decay=decay_rate/25))
+	D.compile(loss=wasserstein, optimizer=SGD(lr=learning_rate)) # decay=decay_rate/25
 	
 	DCGAN = dcgan(G, D, noise_dim)
 	set_trainability(D, False)
@@ -200,13 +193,14 @@ if __name__ == '__main__':
 	
 	# Initialize a Summary writer
 	logger = Logger(os.path.join(log_dir, 'summary'))
+	
+	# Load data
+	provider = NistDataProvider(path=db_path, validation=0.1, batch_size=batch_size)
+	provider.__iter__()
 
 	# Training
 	try:
 		for e in range(1, nb_epoch+1):
-			# Compute the number of batch per epoch
-			n_batch_per_epoch = math.ceil(nb_img / batch_size)
-			epoch_size = n_batch_per_epoch * batch_size
 			# Many critic updates at the beginning
 			if (e < 25 and not load_dir) or e % 500 == 0:
 				disc_iterations = 100
@@ -221,32 +215,34 @@ if __name__ == '__main__':
 						progressbar.widgets.AdaptiveETA()])
 
 			########## 1) Train the critic / discriminator ############
-			# Initialize the labels [Y_fake, Y_real]
-			Y_real = np.ones(batch_size)
-			Y_fake = -Y_real
-			Y = np.concatenate([Y_real, Y_fake], axis=0)
+			# Initialize the labels (randomly - not exactly 1s and -1s)
+			Y_real = np.random.rand(batch_size) * 0.5 + 0.7 # [0.7, 1.2) -> almost 1s
+			Y_fake = -(np.random.rand(batch_size) * 0.5 + 0.7) # (-1.2, 0.7] -> almost -1s
 			# Initializations
 			lossD = []
 			set_trainability(D, True)
-			for _ in range(disc_iterations):
+			for n in range(disc_iterations):
 				# Clip discriminator weights
 				for l in D.layers:
 					weights = l.get_weights()
 					weights = [np.clip(w, clamp_lower, clamp_upper) for w in weights]
 					l.set_weights(weights)
 				# Load the batch of images
-				X_real = gen_batch.next()
-				# The last batch will be shorter
-				N = X_real.shape[0]
+				try:
+					X_real, _ = provider.__next__()
+				except StopIteration:
+					provider.__iter__()
+					X_real, _ = provider.__next__()
 				# Create the fake images
-				noise_input = sample_noise(noise_dim, N, noise_scale)
+				noise_input = sample_noise(noise_dim, batch_size, noise_scale)
 				X_fake = G.predict(noise_input)
-				# Create the batch
-				X = np.concatenate([X_real, X_fake], axis=0)
+				# Some batches could be shorter
+				N = X_real.shape[0]
 				# Update the discriminator
-				lossD.append(D.train_on_batch(X, Y[:X.shape[0]]))
+				lossD.append(D.train_on_batch(X_real, Y_real[:N]))
+				lossD.append(D.train_on_batch(X_fake, Y_fake))
 				# Update progressbar
-				pb.update(_)
+				pb.update(n)
 			set_trainability(D, False)
 			# Compute the total loss
 			lossD = np.mean(lossD)
