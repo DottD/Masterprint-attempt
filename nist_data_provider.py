@@ -31,6 +31,20 @@ class NistDataProvider:
 			self.train_images = self.train_images[:-count]
 		# Initialize the class on training mode
 		self.training_mode = True
+		# Compute total available number of batches
+		self.length = ceil( len(self.train_images) / self.batch_size )
+		
+	def change_training_mode(self):
+		# Switch from training mode to validation, or the other way round
+		if self.validation:
+			self.training_mode = not self.training_mode
+			if self.training_mode:
+				list_of_images = self.train_images
+			else:
+				list_of_images = self.validation_images
+			self.length = ceil( len(list_of_images) / self.batch_size )
+		else: 
+			raise Exception("Validation should be set to change training mode")
 		
 	def __iter__(self):
 		# Initialize counter
@@ -42,8 +56,6 @@ class NistDataProvider:
 			list_of_images = self.validation_images
 		# Shuffle the list of images
 		random.shuffle(list_of_images)
-		# Compute total available number of batches
-		self.length = ceil( len(list_of_images) / self.batch_size )
 		return self
 		
 	def __next__(self):
@@ -57,8 +69,6 @@ class NistDataProvider:
 				list_of_images = self.validation_images
 			# Check for array's end
 			if self.idx >= len(list_of_images):
-				# Switch from training mode to validation
-				self.training_mode = not self.training_mode
 				# Raise an iteration to stop looping
 				raise StopIteration()
 			else:
@@ -101,6 +111,18 @@ class NistDataProvider:
 		label = 2 * int(num) - (character == 'f')
 		return label
 		
+def to_smooth_categorical(labels, num_classes, range_1=(0.7, 1.2), range_0=(0.0, 0.3)):
+	# Get the batch size
+	bs = labels.shape[0]
+	# Initialize the output matrix to zeros
+	Y = np.random.rand(bs, num_classes) * (range_0[1]-range_0[0]) + range_0[0]
+	# Generate a random float in the given range for each label
+	R = np.random.rand(bs) * (range_1[1]-range_1[0]) + range_1[0]
+	# Mark the correct label for each sample
+	Y[np.arange(bs), labels] = R
+	
+	return Y
+		
 if __name__=='__main__':
 	script_descr = "NistDataProvider definition - test"
 	print(script_descr)
@@ -111,12 +133,5 @@ if __name__=='__main__':
 	# Training
 	for X, Y in provider:
 		print(X.shape, Y.shape, len(provider))
-	# Validation
-	for X, Y in provider:
-		print(X.shape, Y.shape, len(provider))
-	# Training
-	for X, Y in provider:
-		print(X.shape, Y.shape, len(provider))
-	# Validation
-	for X, Y in provider:
+		Y = to_smooth_categorical(Y, 5400)
 		print(X.shape, Y.shape, len(provider))

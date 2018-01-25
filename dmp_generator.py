@@ -195,7 +195,7 @@ if __name__ == '__main__':
 	logger = Logger(os.path.join(log_dir, 'summary'))
 	
 	# Load data
-	provider = NistDataProvider(path=db_path, validation=0.1, batch_size=batch_size)
+	provider = NistDataProvider(path=db_path, validation=None, batch_size=batch_size)
 	provider.__iter__()
 
 	# Training
