@@ -2,7 +2,7 @@ import numpy
 from keras.models import Sequential, Model, load_model
 from keras.layers import Conv2D, Flatten, Dense
 from keras.regularizers import l2
-from keras.optimizers import RMSprop
+from keras.optimizers import Adam
 from keras.activations import sigmoid
 from scipy.ndimage import zoom
 import argparse
@@ -23,13 +23,14 @@ if __name__ == '__main__':
 	parser.add_argument("out", help="Name of the output folder, created in the current directory")
 	parser.add_argument("--load", default=None, help="Name of the folder containing the pre-trained model")
 	parser.add_argument("-E", "--epochs", default=600, type=int, help="Number of training steps")
-	parser.add_argument("--batch-size", default=64, type=int, help="Number of images to feed per iteration")
+	parser.add_argument("--batch-size", default=256, type=int, help="Number of images to feed per iteration")
 	parser.add_argument("--img-size", default=(128, 128, 1), 
 		type=lambda strin: tuple(int(val) for val in strin.split('x')),
 		help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
 	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
-	parser.add_argument("--learning-rate", default=1E-6, type=float, help="Learning rate for Adam optimizer")
+	parser.add_argument("--learning-rate", default=5E-6, type=float, help="Learning rate for Adam optimizer")
+	parser.add_argument("--decay-rate", default=0.01, type=float, help="Learning rate for Adam optimizer")
 	args = vars(parser.parse_args())
 	print('------')
 	print("Parameters:")
@@ -43,6 +44,7 @@ if __name__ == '__main__':
 	nb_epoch = args["epochs"]
 	batch_size = args["batch_size"]
 	learning_rate = args["learning_rate"]
+	decay_rate = args["decay_rate"]
 
 	# I/O Folders
 	db_path = os.path.abspath(os.path.normpath(args["in"])) # Path to the database folder
@@ -63,8 +65,8 @@ if __name__ == '__main__':
 	else:
 		# Create and compile models
 		channel_first_shape = (img_shape[2], img_shape[0], img_shape[1])
-		CNN = ResnetBuilder.build(channel_first_shape, num_classes, "bottleneck", [3, 4, 6, 3], activation="sigmoid")
-		CNN.compile(optimizer=RMSprop(lr=learning_rate), 
+		CNN = ResnetBuilder.build_resnet_18(channel_first_shape, num_classes, activation="sigmoid")
+		CNN.compile(optimizer=Adam(lr=learning_rate, decay=decay_rate, amsgrad=True), 
 				loss="binary_crossentropy", # not mutually exclusive classes, independent per-class distributions
 				metrics=["categorical_accuracy"]) # only after a masterprint multiple classes can be activated
 		
@@ -116,7 +118,7 @@ if __name__ == '__main__':
 				loss /= len(provider)
 				accuracy /= len(provider)
 				# Write summary to file
-				logger.log_scalar("Evaluation/accuracy", accuracy*100.0, e)
+				logger.log_scalar("Evaluation/accuracy_%", accuracy*100.0, e)
 				logger.log_scalar("Evaluation/loss", loss, e)
 				weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
 				logger.log_histogram("Model/weights", weights, e)
