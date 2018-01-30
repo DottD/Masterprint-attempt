@@ -10,6 +10,7 @@ import os
 import math
 import time
 import progressbar
+from datetime import datetime
 # Files
 from nist_data_provider import NistDataProvider, to_smooth_categorical
 from raghakot_resnet import ResnetBuilder
@@ -23,13 +24,13 @@ if __name__ == '__main__':
 	parser.add_argument("out", help="Name of the output folder, created in the current directory")
 	parser.add_argument("--load", default=None, help="Name of the folder containing the pre-trained model")
 	parser.add_argument("-E", "--epochs", default=600, type=int, help="Number of training steps")
-	parser.add_argument("--batch-size", default=256, type=int, help="Number of images to feed per iteration")
+	parser.add_argument("--batch-size", default=64, type=int, help="Number of images to feed per iteration")
 	parser.add_argument("--img-size", default=(128, 128, 1), 
 		type=lambda strin: tuple(int(val) for val in strin.split('x')),
 		help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
 	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
-	parser.add_argument("--learning-rate", default=5E-6, type=float, help="Learning rate for Adam optimizer")
+	parser.add_argument("--learning-rate", default=5E-4, type=float, help="Learning rate for Adam optimizer")
 	parser.add_argument("--decay-rate", default=0.01, type=float, help="Learning rate for Adam optimizer")
 	args = vars(parser.parse_args())
 	print('------')
@@ -47,10 +48,10 @@ if __name__ == '__main__':
 	decay_rate = args["decay_rate"]
 
 	# I/O Folders
-	db_path = os.path.abspath(os.path.normpath(args["in"])) # Path to the database folder
-	out_folder = args["out"] # Name of the folder with training outputs
+	db_path = os.path.abspath(os.path.normpath(args["in"]))
+	summary_folder = str(datetime.now().isoformat(sep='_', timespec='seconds')).replace(':', '_').replace('-', '_')
+	log_dir = os.path.abspath(args["out"])
 	load_path = args["load"]
-	log_dir = os.path.abspath(os.path.join(os.path.dirname(db_path), out_folder))
 	if not os.path.exists(log_dir):
 		os.makedirs(log_dir)
 	print('Logs will be summarized in ' + log_dir)
@@ -71,10 +72,21 @@ if __name__ == '__main__':
 				metrics=["categorical_accuracy"]) # only after a masterprint multiple classes can be activated
 		
 	# Initialize a Summary writer
-	logger = Logger(os.path.join(log_dir, 'summary'))
+	logger = Logger(os.path.join(log_dir, summary_folder))
 	weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
 	logger.log_histogram("Initialization/weights", weights, 0)
 	logger.log_histogram("Initialization/weights_no_outlier", weights, 0, keep=95)
+	
+	# Create a file with the model description
+	with open(os.path.join(log_dir, 'summary_'+summary_folder+'.txt'), mode='w') as F:
+		print2F = lambda s: F.write(s+'\n')
+		print2F('------')
+		print2F("Parameters:")
+		for (key, val) in args.items():
+			print2F(str(key)+' = '+str(val))
+		print2F('------')
+		print2F('Logs will be summarized in ' + log_dir)
+		CNN.summary(print_fn=print2F)
 	
 	# Training
 	try:
@@ -95,7 +107,18 @@ if __name__ == '__main__':
 
 			# Save model weights (every *** epochs)
 			if(e % args["save_epochs"] == 0):
-				CNN.save(os.path.join(log_dir, 'CNN_save.h5'), overwrite=True)
+				CNN.save(os.path.join(log_dir, 'save_'+summary_folder+'_'+str(e)+'.h5'), overwrite=True)
+				with os.scandir(log_dir) as it:
+					for entry in it:
+						is_curr_save = entry.name.startswith('save_'+summary_folder) and entry.is_file()
+						try:
+							is_old_save = float(entry.name.split('_')[-1].split('.')[0]) < e
+						except ValueError:
+							# String not convertible to float -> not to remove
+							is_old_save = False
+						finally:
+							if is_curr_save and is_old_save:
+								os.remove(entry.path)
 
 			# Print epoch summary (every *** epochs)
 			if(e % args["summary_epochs"] == 0):
