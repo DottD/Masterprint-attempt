@@ -67,7 +67,7 @@ if __name__ == '__main__':
 		# Create and compile models
 		channel_first_shape = (img_shape[2], img_shape[0], img_shape[1])
 		CNN = ResnetBuilder.build_resnet_18(channel_first_shape, num_classes, activation="sigmoid")
-		CNN.compile(optimizer=Adam(lr=learning_rate, decay=decay_rate, amsgrad=True), 
+		CNN.compile(optimizer=Adam(lr=learning_rate, decay=decay_rate/num_classes*3.0, amsgrad=True), 
 				loss="binary_crossentropy", # not mutually exclusive classes, independent per-class distributions
 				metrics=["categorical_accuracy"]) # only after a masterprint multiple classes can be activated
 		
