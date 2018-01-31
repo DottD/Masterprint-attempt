@@ -110,7 +110,7 @@ class NistDataProvider:
 		num = code[:-1]
 		character = code[-1]
 		label = 2 * int(num) - (character == 'f')
-		return label
+		return label-1
 		
 def to_smooth_categorical(labels, num_classes, range_1=(0.7, 1.2), range_0=(0.0, 0.3)):
 	# Get the batch size
@@ -133,6 +133,10 @@ if __name__=='__main__':
 	provider = NistDataProvider(args["in"], batch_size=256, validation=0.1)
 	# Training
 	for X, Y in provider:
-		print(X.shape, Y.shape, len(provider))
-		Y = to_smooth_categorical(Y, 5400)
-		print(X.shape, Y.shape, len(provider))
+		for i in range(X.shape[0]):
+			print(X.shape, Y.shape)
+			x = X[i, :, :, 0]
+			y = Y[i]
+			plt.imshow(x)
+			plt.title(str(y)+' min='+str(x.min())+' max='+str(x.max()))
+			plt.show()

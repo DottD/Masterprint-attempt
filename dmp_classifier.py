@@ -4,6 +4,7 @@ from keras.layers import Conv2D, Flatten, Dense
 from keras.regularizers import l2
 from keras.optimizers import Adam
 from keras.activations import sigmoid
+from keras.applications import ResNet
 from scipy.ndimage import zoom
 import argparse
 import os
@@ -30,7 +31,7 @@ if __name__ == '__main__':
 		help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
 	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
-	parser.add_argument("--learning-rate", default=5E-4, type=float, help="Learning rate for Adam optimizer")
+	parser.add_argument("--learning-rate", default=5E-5, type=float, help="Learning rate for Adam optimizer")
 	parser.add_argument("--decay-rate", default=0.01, type=float, help="Learning rate for Adam optimizer")
 	args = vars(parser.parse_args())
 	print('------')
@@ -50,7 +51,7 @@ if __name__ == '__main__':
 	# I/O Folders
 	db_path = os.path.abspath(os.path.normpath(args["in"]))
 	summary_folder = str(datetime.now().isoformat(sep='_', timespec='seconds')).replace(':', '_').replace('-', '_')
-	log_dir = os.path.abspath(args["out"])
+	log_dir = os.path.join(os.path.abspath(args["out"]), summary_folder)
 	load_path = args["load"]
 	if not os.path.exists(log_dir):
 		os.makedirs(log_dir)
@@ -59,21 +60,22 @@ if __name__ == '__main__':
 	# Load data
 	provider = NistDataProvider(path=db_path, batch_size=batch_size, validation=None)
 	num_classes = provider.num_classes
-	print("classes", provider.num_classes, "length", len(provider))
 			
 	# Eventually load pre-trained weights
 	if load_path:
 		CNN = load_model(load_path)
 	else:
 		# Create and compile models
-		channel_first_shape = (img_shape[2], img_shape[0], img_shape[1])
-		CNN = ResnetBuilder.build_resnet_18(channel_first_shape, num_classes, activation="sigmoid")
-		CNN.compile(optimizer=Adam(lr=learning_rate, decay=decay_rate/num_classes*3.0, amsgrad=True), 
+		CNN = ResNet(input_shape=img_shape, classes=num_classes, block='bottleneck', residual_unit='v2', repetitions=[2, 2, 2, 2],
+		           initial_filters=64, activation='sigmoid', include_top=False, input_tensor=None, dropout=0.2,
+		           transition_dilation_rate=(1, 1), initial_strides=(2, 2), initial_kernel_size=(7, 7),
+		           initial_pooling='max', final_pooling='avg', top='classification')
+		CNN.compile(optimizer=Adam(lr=learning_rate, decay=decay_rate/len(provider), amsgrad=True), 
 				loss="binary_crossentropy", # not mutually exclusive classes, independent per-class distributions
 				metrics=["categorical_accuracy"]) # only after a masterprint multiple classes can be activated
 		
 	# Initialize a Summary writer
-	logger = Logger(os.path.join(log_dir, summary_folder))
+	logger = Logger(log_dir)
 	weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
 	logger.log_histogram("Initialization/weights", weights, 0)
 	logger.log_histogram("Initialization/weights_no_outlier", weights, 0, keep=95)
@@ -90,11 +92,14 @@ if __name__ == '__main__':
 		CNN.summary(print_fn=print2F)
 	
 	# Training
+	it_count = 0
+	lr_fn = lambda t: learning_rate * 1. / (1. + decay_rate/len(provider) * t)
 	try:
 		for e in range(1, nb_epoch+1):
 			# Initialize the progress bar
+			custom_text = progressbar.FormatCustomText(format=u'LR=%(lr)f ', mapping=dict({'lr': lr_fn(it_count)}))
 			pb = progressbar.ProgressBar(widgets=[
-					'Epoch '+str(e)+'/'+str(nb_epoch)+' ',
+					'Epoch '+str(e)+'/'+str(nb_epoch)+' ', custom_text,
 					progressbar.widgets.SimpleProgress(format=u'Batch %(value_s)s/%(max_value_s)s'), ' ',
 					progressbar.widgets.Bar(marker=u'\u2588'), ' ',
 					progressbar.widgets.Timer(), ' ',
@@ -105,6 +110,9 @@ if __name__ == '__main__':
 				Y = to_smooth_categorical(Y, num_classes)
 				# Update the CNN
 				CNN.train_on_batch(X, Y)
+				# Update learning rate
+				custom_text.update_mapping(lr=lr_fn(it_count))
+				it_count += 1
 
 			# Save model weights (every *** epochs)
 			if(e % args["save_epochs"] == 0):
@@ -147,5 +155,6 @@ if __name__ == '__main__':
 				weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
 				logger.log_histogram("Model/weights", weights, e)
 				logger.log_histogram("Model/weights_no_outlier", weights, e, keep=95)
+				logger.log_scalar("Training/learning_rate", lr_fn(it_count), e)
 	except KeyboardInterrupt:
 		print("The user interrupted the training.")
