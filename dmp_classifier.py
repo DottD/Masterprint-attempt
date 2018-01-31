@@ -1,22 +1,16 @@
 import numpy
-from keras.models import Sequential, Model, load_model
-from keras.layers import Conv2D, Flatten, Dense
+from keras.models import Model, load_model
 from keras.regularizers import l2
 from keras.optimizers import Adam
-from keras.activations import sigmoid
-from keras.applications import ResNet
-from scipy.ndimage import zoom
+from keras_contrib.applications.resnet import ResNet
 import argparse
 import os
-import math
-import time
 import progressbar
 from datetime import datetime
-# Files
 from nist_data_provider import NistDataProvider, to_smooth_categorical
-from raghakot_resnet import ResnetBuilder
 from tensorboard_logging import Logger
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # disable warnings
 	
 if __name__ == '__main__':
 	# Parse command line arguments
@@ -65,9 +59,9 @@ if __name__ == '__main__':
 	if load_path:
 		CNN = load_model(load_path)
 	else:
-		# Create and compile models
+		# Create and compile models SHOULD NOT BE SOFTMAX!!
 		CNN = ResNet(input_shape=img_shape, classes=num_classes, block='bottleneck', residual_unit='v2', repetitions=[2, 2, 2, 2],
-		           initial_filters=64, activation='sigmoid', include_top=False, input_tensor=None, dropout=0.2,
+		           initial_filters=64, activation="softmax", include_top=True, input_tensor=None, dropout=0.2,
 		           transition_dilation_rate=(1, 1), initial_strides=(2, 2), initial_kernel_size=(7, 7),
 		           initial_pooling='max', final_pooling='avg', top='classification')
 		CNN.compile(optimizer=Adam(lr=learning_rate, decay=decay_rate/len(provider), amsgrad=True), 
