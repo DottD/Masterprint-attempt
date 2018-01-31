@@ -1,16 +1,15 @@
+import os
+import argparse
+import progressbar
+from datetime import datetime
 import numpy
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # disable warnings
 from keras.models import Model, load_model
 from keras.regularizers import l2
 from keras.optimizers import Adam
 from keras_contrib.applications.resnet import ResNet
-import argparse
-import os
-import progressbar
-from datetime import datetime
 from nist_data_provider import NistDataProvider, to_smooth_categorical
 from tensorboard_logging import Logger
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # disable warnings
 	
 if __name__ == '__main__':
 	# Parse command line arguments
