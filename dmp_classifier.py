@@ -58,7 +58,8 @@ if __name__ == '__main__':
 	
 	# Load data
 	provider = NistDataProvider(path=db_path, batch_size=batch_size, validation=None)
-	num_classes = len(provider.train_images)
+	num_classes = provider.num_classes
+	print("classes", provider.num_classes, "length", len(provider))
 			
 	# Eventually load pre-trained weights
 	if load_path:

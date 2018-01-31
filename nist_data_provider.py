@@ -23,7 +23,8 @@ class NistDataProvider:
 		self.validation = validation
 		self.ext = ext
 		# Create a list of the images contained in path
-		self.train_images = scan_dir(self.path, self.ext)
+		tmp_dirs, self.train_images = scan_dir(self.path, self.ext)
+		self.num_classes = len(tmp_dirs)
 		# Eventually split the list into train and validation images
 		if self.validation:
 			count = round(self.validation * len(self.train_images))

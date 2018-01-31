@@ -21,12 +21,15 @@ import psutil
 def scan_dir(path, ending):
 	"""Recursively scan the folder"""
 	file_list = []
+	dir_list = []
 	for curr_dir, _, local_files in os.walk(path):
 		# filter local files
 		local_files = [os.path.join(curr_dir, x) for x in local_files if x.endswith(ending)]
 		# append to global list
 		file_list += local_files
-	return file_list
+		if local_files:
+			dir_list.append(curr_dir)
+	return dir_list, file_list
 	
 def gaussWin2D(shape, sigma=None):
 	"""
@@ -174,7 +177,7 @@ if __name__ == '__main__':
 	# Take each thumb image in the input folder
 	in_abs_dir = os.path.abspath(args["in"])
 	out_abs_dir = os.path.abspath(args["out"])
-	thumbs_files = scan_dir(in_abs_dir, "_01.png")
+	_, thumbs_files = scan_dir(in_abs_dir, "_01.png")
 	# Define the processing function
 	def processing_fn(file):
 		# Decide the output file path
