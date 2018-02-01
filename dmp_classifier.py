@@ -60,7 +60,7 @@ if __name__ == '__main__':
 	else:
 		# Create and compile models SHOULD NOT BE SOFTMAX!!
 		CNN = ResNet(input_shape=img_shape, classes=num_classes, block='bottleneck', residual_unit='v2', repetitions=[2, 2, 2, 2],
-		           initial_filters=64, activation="softmax", include_top=True, input_tensor=None, dropout=0.2,
+		           initial_filters=8, activation="softmax", include_top=True, input_tensor=None, dropout=0.2,
 		           transition_dilation_rate=(1, 1), initial_strides=(2, 2), initial_kernel_size=(7, 7),
 		           initial_pooling='max', final_pooling='avg', top='classification')
 		CNN.compile(optimizer=Adam(lr=learning_rate, decay=decay_rate/len(provider), amsgrad=True), 
