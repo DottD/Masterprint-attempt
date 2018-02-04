@@ -3,7 +3,6 @@ import argparse
 import progressbar
 from datetime import datetime
 import numpy
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # disable warnings
 from keras.models import Model, load_model
 from keras.regularizers import l2
 from keras.optimizers import Adam
@@ -25,7 +24,6 @@ if __name__ == '__main__':
 	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
 	parser.add_argument("--learning-rate", default=5E-5, type=float, help="Learning rate for Adam optimizer")
-	parser.add_argument("--decay-rate", default=0.01, type=float, help="Learning rate for Adam optimizer")
 	args = vars(parser.parse_args())
 	print('------')
 	print("Parameters:")
@@ -39,7 +37,6 @@ if __name__ == '__main__':
 	nb_epoch = args["epochs"]
 	batch_size = args["batch_size"]
 	learning_rate = args["learning_rate"]
-	decay_rate = args["decay_rate"]
 
 	# I/O Folders
 	db_path = os.path.abspath(os.path.normpath(args["in"]))
@@ -63,7 +60,7 @@ if __name__ == '__main__':
 		           initial_filters=8, activation="softmax", include_top=True, input_tensor=None, dropout=0.2,
 		           transition_dilation_rate=(1, 1), initial_strides=(2, 2), initial_kernel_size=(7, 7),
 		           initial_pooling='max', final_pooling='avg', top='classification')
-		CNN.compile(optimizer=Adam(lr=learning_rate, decay=decay_rate/len(provider), amsgrad=True), 
+		CNN.compile(optimizer=Adam(lr=learning_rate, amsgrad=True), 
 				loss="binary_crossentropy", # not mutually exclusive classes, independent per-class distributions
 				metrics=["categorical_accuracy"]) # only after a masterprint multiple classes can be activated
 		
@@ -85,14 +82,11 @@ if __name__ == '__main__':
 		CNN.summary(print_fn=print2F)
 	
 	# Training
-	it_count = 0
-	lr_fn = lambda t: learning_rate * 1. / (1. + decay_rate/len(provider) * t)
 	try:
 		for e in range(1, nb_epoch+1):
 			# Initialize the progress bar
-			custom_text = progressbar.FormatCustomText(format=u'LR=%(lr)f ', mapping=dict({'lr': lr_fn(it_count)}))
 			pb = progressbar.ProgressBar(widgets=[
-					'Epoch '+str(e)+'/'+str(nb_epoch)+' ', custom_text,
+					'Epoch '+str(e)+'/'+str(nb_epoch)+' ',
 					progressbar.widgets.SimpleProgress(format=u'Batch %(value_s)s/%(max_value_s)s'), ' ',
 					progressbar.widgets.Bar(marker=u'\u2588'), ' ',
 					progressbar.widgets.Timer(), ' ',
@@ -103,9 +97,6 @@ if __name__ == '__main__':
 				Y = to_smooth_categorical(Y, num_classes)
 				# Update the CNN
 				CNN.train_on_batch(X, Y)
-				# Update learning rate
-				custom_text.update_mapping(lr=lr_fn(it_count))
-				it_count += 1
 
 			# Save model weights (every *** epochs)
 			if(e % args["save_epochs"] == 0):
@@ -148,6 +139,5 @@ if __name__ == '__main__':
 				weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
 				logger.log_histogram("Model/weights", weights, e)
 				logger.log_histogram("Model/weights_no_outlier", weights, e, keep=95)
-				logger.log_scalar("Training/learning_rate", lr_fn(it_count), e)
 	except KeyboardInterrupt:
 		print("The user interrupted the training.")
