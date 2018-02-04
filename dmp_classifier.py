@@ -6,6 +6,7 @@ import numpy
 from keras.models import Model, load_model
 from keras.regularizers import l2
 from keras.optimizers import Adam
+from keras.utils import to_categorical
 from keras_contrib.applications.resnet import ResNet
 from nist_data_provider import NistDataProvider, to_smooth_categorical
 from tensorboard_logging import Logger
@@ -61,8 +62,7 @@ if __name__ == '__main__':
 		           transition_dilation_rate=(1, 1), initial_strides=(2, 2), initial_kernel_size=(7, 7),
 		           initial_pooling='max', final_pooling='avg', top='classification')
 		CNN.compile(optimizer=Adam(lr=learning_rate, amsgrad=True), 
-				loss="binary_crossentropy", # not mutually exclusive classes, independent per-class distributions
-				metrics=["categorical_accuracy"]) # only after a masterprint multiple classes can be activated
+				loss="binary_crossentropy") # not mutually exclusive classes, independent per-class distributions
 		
 	# Initialize a Summary writer
 	logger = Logger(log_dir)
@@ -125,14 +125,14 @@ if __name__ == '__main__':
 				accuracy = 0.0
 				loss = 0.0
 				for X, Y in pb(provider):
-					# Load the batch of images
-					Y = to_smooth_categorical(Y, num_classes)
-					# Generate prediction
-					loc_loss, loc_accuracy = CNN.test_on_batch(X, Y)
-					loss += loc_loss
-					accuracy += loc_accuracy
+					# Compute accuracy
+					y = CNN.predict_on_batch(X)
+					accuracy += (Y == numpy.argmax(y, axis=1)).sum()
+					# Compute loss
+					Y = to_categorical(Y, num_classes)
+					loss += CNN.test_on_batch(X, Y)
 				loss /= len(provider)
-				accuracy /= len(provider)
+				accuracy /= num_classes
 				# Write summary to file
 				logger.log_scalar("Evaluation/accuracy_%", accuracy*100.0, e)
 				logger.log_scalar("Evaluation/loss", loss, e)
