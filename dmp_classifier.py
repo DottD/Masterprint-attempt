@@ -3,6 +3,7 @@ import argparse
 import progressbar
 from datetime import datetime
 import numpy
+from keras.layers import Dense
 from keras.models import Model, load_model
 from keras.regularizers import l2
 from keras.optimizers import RMSprop
@@ -57,10 +58,16 @@ if __name__ == '__main__':
 		CNN = load_model(load_path)
 	else:
 		# Create and compile models SHOULD NOT BE SOFTMAX!!
-		CNN = ResNet(input_shape=img_shape, classes=num_classes, block='bottleneck', residual_unit='v2', repetitions=[2, 2, 2, 2],
-		           initial_filters=4, activation="softmax", include_top=True, input_tensor=None, dropout=0.2,
-		           transition_dilation_rate=(1, 1), initial_strides=(2, 2), initial_kernel_size=(7, 7),
-		           initial_pooling='max', final_pooling='avg', top='classification')
+		CNN = ResNet(input_shape=img_shape, classes=num_classes,
+					block='bottleneck', residual_unit='v2', repetitions=[2, 2, 2, 2],
+		           	initial_filters=4, # This determines the number of parameters
+					activation=None, # final activation manually added
+					include_top=False, # last dense layer manually added
+					input_tensor=None, dropout=0.2, transition_dilation_rate=(1, 1), initial_strides=(2, 2), initial_kernel_size=(7, 7),
+		           	initial_pooling='max', # for imagenet this is correct
+					final_pooling='avg', # final average pooling -> output will be (batch_size, ***)
+					top='classification') # no effect with include_top set to false
+		CNN = Model(inputs=CNN.inputs[0], outputs=Dense(num_classes, activation='sigmoid')(CNN.outputs[0]))
 		CNN.compile(optimizer=RMSprop(lr=learning_rate), 
 				loss="binary_crossentropy") # not mutually exclusive classes, independent per-class distributions
 		
