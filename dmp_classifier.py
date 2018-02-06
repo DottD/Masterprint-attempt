@@ -6,8 +6,9 @@ import numpy
 from keras.layers import Dense
 from keras.models import Model, load_model
 from keras.regularizers import l2
-from keras.optimizers import RMSprop
+from keras.optimizers import Adam
 from keras.utils import to_categorical
+from keras.callbacks import ProgbarLogger, TerminateOnNaN, ModelCheckpoint, LearningRateScheduler, LambdaCallback, ReduceLROnPlateau
 from keras_contrib.applications.resnet import ResNet
 from nist_data_provider import NistDataProvider, to_smooth_categorical
 from tensorboard_logging import Logger
@@ -23,9 +24,9 @@ if __name__ == '__main__':
 	parser.add_argument("--img-size", default=(128, 128, 1), 
 		type=lambda strin: tuple(int(val) for val in strin.split('x')),
 		help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
-	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
-	parser.add_argument("--learning-rate", default=5E-6, type=float, help="Learning rate for Adam optimizer")
+	parser.add_argument("--learning-rate", default=5E-4, type=float, help="Learning rate for Adam optimizer")
+	parser.add_argument("--decay-rate", default=0.01, type=float, help="Decay rate for Adam optimizer")
 	args = vars(parser.parse_args())
 	print('------')
 	print("Parameters:")
@@ -39,6 +40,7 @@ if __name__ == '__main__':
 	nb_epoch = args["epochs"]
 	batch_size = args["batch_size"]
 	learning_rate = args["learning_rate"]
+	decay_rate = args["decay_rate"]
 
 	# I/O Folders
 	db_path = os.path.abspath(os.path.normpath(args["in"]))
@@ -50,17 +52,19 @@ if __name__ == '__main__':
 	print('Logs will be summarized in ' + log_dir)
 	
 	# Load data
-	provider = NistDataProvider(path=db_path, batch_size=batch_size, validation=None)
-	num_classes = provider.num_classes
+	train_provider = NistDataProvider(path=db_path, batch_size=batch_size, validation=None)
+	valid_provider = NistDataProvider(path=db_path, batch_size=batch_size, validation=None)
+	num_classes = train_provider.num_classes
 			
 	# Eventually load pre-trained weights
 	if load_path:
 		CNN = load_model(load_path)
+		initial_epoch = int(load_path.split('_')[-1].split('.')[0])
 	else:
 		# Create and compile models SHOULD NOT BE SOFTMAX!!
 		CNN = ResNet(input_shape=img_shape, classes=num_classes,
 					block='bottleneck', residual_unit='v2', repetitions=[2, 2, 2, 2],
-		           	initial_filters=64, # This determines the number of parameters
+		           	initial_filters=8, # This determines the number of parameters
 					activation=None, # final activation manually added
 					include_top=False, # last dense layer manually added
 					input_tensor=None, dropout=0.2, transition_dilation_rate=(1, 1), initial_strides=(2, 2), initial_kernel_size=(7, 7),
@@ -68,14 +72,47 @@ if __name__ == '__main__':
 					final_pooling='avg', # final average pooling -> output will be (batch_size, ***)
 					top='classification') # no effect with include_top set to false
 		CNN = Model(inputs=CNN.inputs[0], outputs=Dense(num_classes, activation='sigmoid', kernel_initializer="he_normal")(CNN.outputs[0]))
-		CNN.compile(optimizer=RMSprop(lr=learning_rate), 
-				loss="binary_crossentropy") # not mutually exclusive classes, independent per-class distributions
+		CNN.compile(optimizer=Adam(lr=learning_rate, amsgrad=True), 
+				loss="binary_crossentropy", # not mutually exclusive classes, independent per-class distributions
+				metrics=["categorical_accuracy"])
+		initial_epoch = 0
 		
 	# Initialize a Summary writer
 	logger = Logger(log_dir)
 	weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
 	logger.log_histogram("Initialization/weights", weights, 0)
 	logger.log_histogram("Initialization/weights_no_outlier", weights, 0, keep=95)
+	
+	# Define learning rate updater
+	compute_lr = lambda e: learning_rate * 1./(1. + decay_rate * e)
+	
+	# Define the end_of_epoch summary operation
+	def summary_op(e, logs):
+		# Write summary to file
+		logger.log_scalar("Validation/accuracy_%", logs['val_categorical_accuracy']*100.0, e)
+		logger.log_scalar("Training/accuracy_%", logs['categorical_accuracy']*100.0, e)
+		logger.log_scalar("Validation/loss", logs['val_loss'], e)
+		logger.log_scalar("Training/loss", logs['loss'], e)
+		logger.log_scalar("Training/learning_rate", compute_lr(e), e)
+		weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
+		logger.log_histogram("Model/weights", weights, e)
+		logger.log_histogram("Model/weights_no_outlier", weights, e, keep=95)
+	
+	# List of callbacks
+	callbacks = [
+		TerminateOnNaN(),
+		ProgbarLogger(count_mode='steps'),
+		ModelCheckpoint(os.path.join(log_dir, 'save_'+summary_folder+'_{epoch:d}.h5'),
+			monitor='val_loss', 
+			verbose=0,
+			save_best_only=True,
+			save_weights_only=False,
+			mode='min',
+			period=args["save_epochs"]),
+		LearningRateScheduler(compute_lr, verbose=0),
+		ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=10, verbose=1, mode='min', epsilon=0.0001, cooldown=0, min_lr=0),
+		LambdaCallback(on_epoch_end=summary_op)
+	]
 	
 	# Create a file with the model description
 	with open(os.path.join(log_dir, 'summary_'+summary_folder+'.txt'), mode='w') as F:
@@ -88,63 +125,17 @@ if __name__ == '__main__':
 		print2F('Logs will be summarized in ' + log_dir)
 		CNN.summary(print_fn=print2F)
 	
-	# Training
-	try:
-		for e in range(1, nb_epoch+1):
-			# Initialize the progress bar
-			pb = progressbar.ProgressBar(widgets=[
-					'Epoch '+str(e)+'/'+str(nb_epoch)+' ',
-					progressbar.widgets.SimpleProgress(format=u'Batch %(value_s)s/%(max_value_s)s'), ' ',
-					progressbar.widgets.Bar(marker=u'\u2588'), ' ',
-					progressbar.widgets.Timer(), ' ',
-					progressbar.widgets.AdaptiveETA()])
-			
-			for X, Y in pb(provider):
-				# Load the batch of images
-				Y = to_categorical(Y, num_classes)
-				# Update the CNN
-				CNN.train_on_batch(X, Y)
-
-			# Save model weights (every *** epochs)
-			if(e % args["save_epochs"] == 0):
-				CNN.save(os.path.join(log_dir, 'save_'+summary_folder+'_'+str(e)+'.h5'), overwrite=True)
-				with os.scandir(log_dir) as it:
-					for entry in it:
-						is_curr_save = entry.name.startswith('save_'+summary_folder) and entry.is_file()
-						try:
-							is_old_save = float(entry.name.split('_')[-1].split('.')[0]) < e
-						except ValueError:
-							# String not convertible to float -> not to remove
-							is_old_save = False
-						finally:
-							if is_curr_save and is_old_save:
-								os.remove(entry.path)
-
-			# Print epoch summary (every *** epochs)
-			if(e % args["summary_epochs"] == 0):
-				pb = progressbar.ProgressBar(widgets=[
-						' -- Evaluation ',
-						progressbar.widgets.SimpleProgress(format=u'Batch %(value_s)s/%(max_value_s)s'), ' ',
-						progressbar.widgets.Bar(marker=u'\u2588'), ' ',
-						progressbar.widgets.Timer(), ' ',
-						progressbar.widgets.AdaptiveETA()])
-				# Evaluate the model
-				accuracy = 0.0
-				loss = 0.0
-				for X, Y in pb(provider):
-					# Compute accuracy
-					y = CNN.predict_on_batch(X)
-					accuracy += (Y == numpy.argmax(y, axis=1)).sum()
-					# Compute loss
-					Y = to_categorical(Y, num_classes)
-					loss += CNN.test_on_batch(X, Y)
-				loss /= len(provider)
-				accuracy /= num_classes
-				# Write summary to file
-				logger.log_scalar("Evaluation/accuracy_%", accuracy*100.0, e)
-				logger.log_scalar("Evaluation/loss", loss, e)
-				weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
-				logger.log_histogram("Model/weights", weights, e)
-				logger.log_histogram("Model/weights_no_outlier", weights, e, keep=95)
-	except KeyboardInterrupt:
-		print("The user interrupted the training.")
+	# Training
+	CNN.fit_generator(train_provider, 
+		steps_per_epoch=None, # if unspecified, will use the len(generator) as a number of steps
+		epochs=nb_epoch,
+		verbose=1,
+		callbacks=callbacks,
+		validation_data=valid_provider,
+		validation_steps=None, # if unspecified, will use the len(validation_data) as a number of steps
+		class_weight=None,
+		max_queue_size=10,
+		workers=2,
+		use_multiprocessing=True,
+		shuffle=False, # false because the generator provides the batches randomly
+		initial_epoch=initial_epoch)

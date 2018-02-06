@@ -6,9 +6,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import progressbar
 from thumb_from_sd09 import scan_dir
+from keras.utils import Sequence
 
 	
-class NistDataProvider:
+class NistDataProvider(Sequence):
 	roi_shape = [128, 128]
 	eps = np.finfo(np.float32).eps
 	
@@ -34,6 +35,9 @@ class NistDataProvider:
 		self.training_mode = True
 		# Compute total available number of batches
 		self.length = ceil( len(self.train_images) / self.batch_size )
+		# Call __iter__ to be compliant with Keras Sequence classes
+		# it does not change anything for normal use as iterator
+		self.__iter__()
 		
 	def change_training_mode(self):
 		# Switch from training mode to validation, or the other way round
@@ -95,7 +99,10 @@ class NistDataProvider:
 				X.append(img)
 				Y.append(label)
 		
-		return np.array(X), np.array(Y)
+		return np.array(X), to_smooth_categorical(np.array(Y), self.num_classes)
+		
+	def __getitem__(self, idx):
+		return self.__next__()
 		
 	def __len__(self):
 		return self.length
