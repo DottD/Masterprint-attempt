@@ -25,7 +25,7 @@ if __name__ == '__main__':
 		help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
 	parser.add_argument("-S", "--summary-epochs", default=1, type=int, help="Summary every this many epochs")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
-	parser.add_argument("--learning-rate", default=5E-5, type=float, help="Learning rate for Adam optimizer")
+	parser.add_argument("--learning-rate", default=5E-6, type=float, help="Learning rate for Adam optimizer")
 	args = vars(parser.parse_args())
 	print('------')
 	print("Parameters:")
@@ -60,14 +60,14 @@ if __name__ == '__main__':
 		# Create and compile models SHOULD NOT BE SOFTMAX!!
 		CNN = ResNet(input_shape=img_shape, classes=num_classes,
 					block='bottleneck', residual_unit='v2', repetitions=[2, 2, 2, 2],
-		           	initial_filters=4, # This determines the number of parameters
+		           	initial_filters=64, # This determines the number of parameters
 					activation=None, # final activation manually added
 					include_top=False, # last dense layer manually added
 					input_tensor=None, dropout=0.2, transition_dilation_rate=(1, 1), initial_strides=(2, 2), initial_kernel_size=(7, 7),
 		           	initial_pooling='max', # for imagenet this is correct
 					final_pooling='avg', # final average pooling -> output will be (batch_size, ***)
 					top='classification') # no effect with include_top set to false
-		CNN = Model(inputs=CNN.inputs[0], outputs=Dense(num_classes, activation='sigmoid')(CNN.outputs[0]))
+		CNN = Model(inputs=CNN.inputs[0], outputs=Dense(num_classes, activation='sigmoid', kernel_initializer="he_normal")(CNN.outputs[0]))
 		CNN.compile(optimizer=RMSprop(lr=learning_rate), 
 				loss="binary_crossentropy") # not mutually exclusive classes, independent per-class distributions
 		
