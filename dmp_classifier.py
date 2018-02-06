@@ -5,7 +5,7 @@ from datetime import datetime
 import numpy
 from keras.models import Model, load_model
 from keras.regularizers import l2
-from keras.optimizers import Adam
+from keras.optimizers import RMSprop
 from keras.utils import to_categorical
 from keras_contrib.applications.resnet import ResNet
 from nist_data_provider import NistDataProvider, to_smooth_categorical
@@ -58,10 +58,10 @@ if __name__ == '__main__':
 	else:
 		# Create and compile models SHOULD NOT BE SOFTMAX!!
 		CNN = ResNet(input_shape=img_shape, classes=num_classes, block='bottleneck', residual_unit='v2', repetitions=[2, 2, 2, 2],
-		           initial_filters=8, activation="softmax", include_top=True, input_tensor=None, dropout=0.2,
+		           initial_filters=4, activation="softmax", include_top=True, input_tensor=None, dropout=0.2,
 		           transition_dilation_rate=(1, 1), initial_strides=(2, 2), initial_kernel_size=(7, 7),
 		           initial_pooling='max', final_pooling='avg', top='classification')
-		CNN.compile(optimizer=Adam(lr=learning_rate, amsgrad=True), 
+		CNN.compile(optimizer=RMSprop(lr=learning_rate), 
 				loss="binary_crossentropy") # not mutually exclusive classes, independent per-class distributions
 		
 	# Initialize a Summary writer
@@ -94,7 +94,7 @@ if __name__ == '__main__':
 			
 			for X, Y in pb(provider):
 				# Load the batch of images
-				Y = to_smooth_categorical(Y, num_classes)
+				Y = to_categorical(Y, num_classes)
 				# Update the CNN
 				CNN.train_on_batch(X, Y)
 
