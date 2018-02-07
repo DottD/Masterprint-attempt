@@ -7,10 +7,9 @@ from keras.layers import Dense
 from keras.models import Model, load_model
 from keras.regularizers import l2
 from keras.optimizers import Adam
-from keras.utils import to_categorical
 from keras.callbacks import ProgbarLogger, TerminateOnNaN, ModelCheckpoint, LearningRateScheduler, LambdaCallback, ReduceLROnPlateau
 from keras_contrib.applications.resnet import ResNet
-from nist_data_provider import NistDataProvider, to_smooth_categorical
+from nist_data_provider import NistDataProvider
 from tensorboard_logging import Logger
 	
 if __name__ == '__main__':
@@ -19,13 +18,13 @@ if __name__ == '__main__':
 	parser.add_argument("in", help="Full path to the input database directory")
 	parser.add_argument("out", help="Name of the output folder, created in the current directory")
 	parser.add_argument("--load", default=None, help="Name of the folder containing the pre-trained model")
-	parser.add_argument("-E", "--epochs", default=600, type=int, help="Number of training steps")
-	parser.add_argument("--batch-size", default=64, type=int, help="Number of images to feed per iteration")
+	parser.add_argument("-E", "--epochs", default=100, type=int, help="Number of training steps")
+	parser.add_argument("--batch-size", default=128, type=int, help="Number of images to feed per iteration")
 	parser.add_argument("--img-size", default=(128, 128, 1), 
 		type=lambda strin: tuple(int(val) for val in strin.split('x')),
 		help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
-	parser.add_argument("--learning-rate", default=5E-4, type=float, help="Learning rate for Adam optimizer")
+	parser.add_argument("--learning-rate", default=5E-5, type=float, help="Learning rate for Adam optimizer")
 	parser.add_argument("--decay-rate", default=0.01, type=float, help="Decay rate for Adam optimizer")
 	args = vars(parser.parse_args())
 	print('------')
@@ -90,12 +89,10 @@ if __name__ == '__main__':
 	def summary_op(e, logs):
 		# Write summary to file
 		logger.log_scalar("Validation/accuracy_%", logs['val_categorical_accuracy']*100.0, e)
-		logger.log_scalar("Validation/loss", logs['val_binary_accuracy']*100.0, e)
-		logger.log_scalar("Validation/loss", logs['val_mean_average_percentage_error'], e)
+		logger.log_scalar("Validation/binary_accuracy", logs['val_binary_accuracy'], e)
 		logger.log_scalar("Validation/loss", logs['val_loss'], e)
 		logger.log_scalar("Training/accuracy_%", logs['categorical_accuracy']*100.0, e)
-		logger.log_scalar("Training/loss", logs['binary_accuracy']*100.0, e)
-		logger.log_scalar("Training/loss", logs['mean_average_percentage_error'], e)
+		logger.log_scalar("Training/binary_accuracy", logs['binary_accuracy'], e)
 		logger.log_scalar("Training/loss", logs['loss'], e)
 		logger.log_scalar("Training/learning_rate", compute_lr(e), e)
 		weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
@@ -105,7 +102,6 @@ if __name__ == '__main__':
 	# List of callbacks
 	callbacks = [
 		TerminateOnNaN(),
-		ProgbarLogger(count_mode='steps'),
 		ModelCheckpoint(os.path.join(log_dir, 'save_'+summary_folder+'_{epoch:d}.h5'),
 			monitor='val_loss', 
 			verbose=0,
@@ -133,7 +129,7 @@ if __name__ == '__main__':
 	CNN.fit_generator(train_provider, 
 		steps_per_epoch=None, # if unspecified, will use the len(generator) as a number of steps
 		epochs=nb_epoch,
-		verbose=1,
+		verbose=0,
 		callbacks=callbacks,
 		validation_data=valid_provider,
 		validation_steps=None, # if unspecified, will use the len(validation_data) as a number of steps

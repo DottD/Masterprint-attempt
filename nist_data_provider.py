@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import progressbar
 from thumb_from_sd09 import scan_dir
+from keras.utils import to_categorical
 from keras.utils import Sequence
 
 	
@@ -99,7 +100,7 @@ class NistDataProvider(Sequence):
 				X.append(img)
 				Y.append(label)
 		
-		return np.array(X), to_smooth_categorical(np.array(Y), self.num_classes)
+		return np.array(X), to_categorical(np.array(Y), self.num_classes)
 		
 	def __getitem__(self, idx):
 		return self.__next__()
