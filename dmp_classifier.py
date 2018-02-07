@@ -74,7 +74,7 @@ if __name__ == '__main__':
 		CNN = Model(inputs=CNN.inputs[0], outputs=Dense(num_classes, activation='sigmoid', kernel_initializer="he_normal")(CNN.outputs[0]))
 		CNN.compile(optimizer=Adam(lr=learning_rate, amsgrad=True), 
 				loss="binary_crossentropy", # not mutually exclusive classes, independent per-class distributions
-				metrics=["categorical_accuracy"])
+				metrics=["categorical_accuracy", "binary_accuracy", "mape"])
 		initial_epoch = 0
 		
 	# Initialize a Summary writer
@@ -90,8 +90,12 @@ if __name__ == '__main__':
 	def summary_op(e, logs):
 		# Write summary to file
 		logger.log_scalar("Validation/accuracy_%", logs['val_categorical_accuracy']*100.0, e)
-		logger.log_scalar("Training/accuracy_%", logs['categorical_accuracy']*100.0, e)
+		logger.log_scalar("Validation/loss", logs['val_binary_accuracy']*100.0, e)
+		logger.log_scalar("Validation/loss", logs['val_mean_average_percentage_error'], e)
 		logger.log_scalar("Validation/loss", logs['val_loss'], e)
+		logger.log_scalar("Training/accuracy_%", logs['categorical_accuracy']*100.0, e)
+		logger.log_scalar("Training/loss", logs['binary_accuracy']*100.0, e)
+		logger.log_scalar("Training/loss", logs['mean_average_percentage_error'], e)
 		logger.log_scalar("Training/loss", logs['loss'], e)
 		logger.log_scalar("Training/learning_rate", compute_lr(e), e)
 		weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
