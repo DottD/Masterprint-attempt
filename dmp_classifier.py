@@ -10,7 +10,7 @@ from keras.metrics import top_k_categorical_accuracy
 from keras.models import Model, load_model
 from keras.regularizers import l2
 from keras.optimizers import Adam
-from keras.callbacks import ProgbarLogger, TerminateOnNaN, ModelCheckpoint, LearningRateScheduler, LambdaCallback, ReduceLROnPlateau
+from keras.callbacks import TerminateOnNaN, ModelCheckpoint, LearningRateScheduler, LambdaCallback, ReduceLROnPlateau, EarlyStopping
 from keras_contrib.applications.resnet import ResNet
 from nist_data_provider import NistDataProvider
 from tensorboard_logging import Logger
@@ -47,14 +47,14 @@ if __name__ == '__main__':
 	parser.add_argument("in", help="Full path to the input database directory")
 	parser.add_argument("out", help="Name of the output folder, created in the current directory")
 	parser.add_argument("--load", default=None, help="Name of the folder containing the pre-trained model")
-	parser.add_argument("-E", "--epochs", default=100, type=int, help="Number of training steps")
+	parser.add_argument("-E", "--epochs", default=500, type=int, help="Number of training steps")
 	parser.add_argument("--batch-size", default=128, type=int, help="Number of images to feed per iteration")
 	parser.add_argument("--img-size", default=(128, 128, 1), 
 		type=lambda strin: tuple(int(val) for val in strin.split('x')),
 		help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth; H is not used so far")
 	parser.add_argument("--save-epochs", default=1, type=int, help="Save checkpoint every this many epochs")
-	parser.add_argument("--learning-rate", default=5E-5, type=float, help="Learning rate for Adam optimizer")
-	parser.add_argument("--decay-rate", default=0.01, type=float, help="Decay rate for Adam optimizer")
+	parser.add_argument("--learning-rate", default=1E-3, type=float, help="Learning rate for Adam optimizer")
+	parser.add_argument("--decay-rate", default=0.05, type=float, help="Decay rate for Adam optimizer")
 	args = vars(parser.parse_args())
 	print('------')
 	print("Parameters:")
@@ -117,10 +117,6 @@ if __name__ == '__main__':
 		logger.log_scalar("Validation/loss", logs['val_loss'], e)
 		logger.log_scalar("Training/sparse_categorical_accuracy_%", logs['sparse_categorical_accuracy']*100, e)
 		logger.log_scalar("Training/loss", logs['loss'], e)
-		logger.log_scalar("Model/learning_rate", compute_lr(e), e)
-		weights = [y for layer in CNN.layers for x in layer.get_weights() for y in x.flatten().tolist()]
-		logger.log_histogram("Model/weights", weights, e)
-		logger.log_histogram("Model/weights_no_outlier", weights, e, keep=95)
 	
 	# List of callbacks
 	callbacks = [
@@ -133,7 +129,8 @@ if __name__ == '__main__':
 			mode='min',
 			period=args["save_epochs"]),
 		LearningRateScheduler(compute_lr, verbose=0),
-		ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=5, verbose=1, mode='min', epsilon=0.0001, cooldown=0, min_lr=0),
+		EarlyStopping(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='min'),
+		ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=10, verbose=1, mode='min', epsilon=0.0001, cooldown=0, min_lr=0),
 		LambdaCallback(on_epoch_end=summary_op)
 	]
 	
