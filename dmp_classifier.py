@@ -91,7 +91,7 @@ if __name__ == '__main__':
 	else:
 		CNN = ResNet(input_shape=img_shape, classes=num_classes,
 					block='basic', residual_unit='v1', repetitions=[2, 2, 2, 2],
-		           	initial_filters=8, # This determines the number of parameters
+		           	initial_filters=4, # This determines the number of parameters
 					activation=None, # final activation manually added
 					include_top=False, # last dense layer manually added
 					input_tensor=None, dropout=0, transition_dilation_rate=(1, 1), initial_strides=(2, 2), initial_kernel_size=(7, 7),
