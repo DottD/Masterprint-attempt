@@ -100,7 +100,7 @@ class NistDataProvider(Sequence):
 				X.append(img)
 				Y.append(label)
 		
-		return np.array(X), to_categorical(np.array(Y), self.num_classes)
+		return np.array(X), np.array(Y)
 		
 	def __getitem__(self, idx):
 		return self.__next__()
@@ -117,8 +117,9 @@ class NistDataProvider(Sequence):
 		code = path.split('.')[-2].split('_')[1]
 		num = code[:-1]
 		character = code[-1]
-		label = 2 * int(num) - (character == 'f')
-		return label-1
+		label = 2 * int(num) + (character == 'f')
+#		label = 2 * int(num) - (character == 'f')
+		return label
 		
 def to_smooth_categorical(labels, num_classes, range_1=(0.7, 1.2), range_0=(0.0, 0.3)):
 	# Get the batch size
