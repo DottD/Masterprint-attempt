@@ -4,9 +4,11 @@ License: Copyleft
 """
 __author__ = "Michael Gygli"
 
+import os
 import tensorflow as tf
 from io import BytesIO
 import matplotlib.pyplot as plt
+from thumb_from_sd09 import scan_dir
 import numpy as np
 import base64
 
@@ -98,3 +100,29 @@ class Logger(object):
 		summary = tf.Summary(value=[tf.Summary.Value(tag=tag, histo=hist)])
 		self.writer.add_summary(summary, step)
 		self.writer.flush()
+		
+	def log_text(self, tag, text, step=None):
+		text_tensor = tf.make_tensor_proto(text, dtype=tf.string)
+		meta = tf.SummaryMetadata()
+		meta.plugin_data.plugin_name = "text" # ???
+		summary = tf.Summary()
+		summary.value.add(tag=tag, metadata=meta, tensor=text_tensor)
+		self.writer.add_summary(summary, step)
+		self.writer.flush()
+		
+	def copyFrom(self, path, max_step=None):
+		"""
+		Copy the content of the given events file.
+		"""
+		for e in tf.train.summary_iterator(path):
+			if not max_step or max_step > e.step:
+				self.writer.add_summary(e.summary, e.step)
+				self.writer.flush()
+			else:
+				return
+		
+if __name__ == '__main__':
+	log_dir = "/Users/MacD/Downloads/classifier_training/net-1-1-1-2  if=1  lr=0.0002  dr=0  bs=256"
+	if not os.path.exists(log_dir): os.makedirs(log_dir)
+	logger = Logger(log_dir)
+	logger.log_text("Description2/bla", "this is a different description", 3)

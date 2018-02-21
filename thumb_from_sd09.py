@@ -166,43 +166,97 @@ def segmentation(image, _f, p):
 	foreground = (label_im == largest_idx).astype(int)
 	return foreground
 
+def random_crop_and_norm(img, img_shape=(128, 128)):
+	"""
+	Generate partial fingerprints
+	"""
+	# Crop the image
+	y, x = [np.random.randint(0, img.shape[i]-img_shape[i]+1) for i in range(2)]
+	return img[y:y+img_shape[0], x:x+img_shape[1]]
+
 if __name__ == '__main__':
 	# Parsing arguments
 	parser = argparse.ArgumentParser(description="Extraction of thumbs from sd09 dataset")
 	parser.add_argument("in", help="Path to the input database directory")
 	parser.add_argument("out", help="Path to the output database directory")
+	parser.add_argument("-N", "--num-partials", default=15, type=int, help="Number of partial images per finger (train db)")
+	parser.add_argument("-V", "--validation-num", default=3, type=int, help="Number of partial images per finger (validation db)")
 	parser.add_argument("--keep-class", action="store_true", default=False, help="Whether to keep the last directory before the file")
+	parser.add_argument("--no-rnd-crop", action="store_true", default=False, help="Whether to perform only preprocessing and not random cropping")
+	parser.add_argument("--img-shape", default=(128, 128, 1), 
+		type=lambda strin: tuple(int(val) for val in strin.split('x')),
+		help="Expected image shape in the form 'WxHxD', W=width, H=height, D=depth")
 	args = vars(parser.parse_args())
 	
 	# Take each thumb image in the input folder
 	in_abs_dir = os.path.abspath(args["in"])
 	out_abs_dir = os.path.abspath(args["out"])
+	N = args["num_partials"]
+	V = args["validation_num"]
+	img_shape = args["img_shape"]
 	_, thumbs_files = scan_dir(in_abs_dir, "_01.png")
 	# Define the processing function
 	def processing_fn(file):
 		# Decide the output file path
-		if args["keep_class"]:
-			# Next line keeps only the folder where the element is
-			out_file = os.path.join(out_abs_dir, file.split(os.sep)[-2], os.path.basename(file))
-			# Next line keeps the whole structure
-			# out_file = file.replace(in_abs_dir, out_abs_dir)
+		out_file, out_ext = os.path.basename(file).split('.')
+		if not args["no_rnd_crop"]:
+			out_dir_train = os.path.join(out_abs_dir, 'train')
+			out_dir_val = os.path.join(out_abs_dir, 'val')
+			if args["keep_class"]:
+				class_name = file.split(os.sep)[-2]
+				out_dir_train = os.path.join(out_dir_train, class_name)
+				out_dir_val = os.path.join(out_dir_val, class_name)
+			if not os.path.exists(out_dir_train):
+				os.makedirs(out_dir_train)
+			if not os.path.exists(out_dir_val):
+				os.makedirs(out_dir_val)
 		else:
-			out_file = os.path.join(out_abs_dir, os.path.basename(file))
-		out_dir = os.path.dirname(out_file)
-		if not os.path.exists(out_dir):
-			os.makedirs(out_dir)
+			if args["keep_class"]:
+				class_name = file.split(os.sep)[-2]
+				out_dir = os.path.join(out_abs_dir, class_name)
+			if not os.path.exists(out_dir):
+				os.makedirs(out_dir)
+			
 		# Read image
 		img = plt.imread(file)
 		# Compute ridge frequency
 		freq = computeRidgeFrequency(img)
 		# Segmentation
-		mask = segmentation(img, freq, 75)
+		mask = segmentation(img, freq, 85)
 		# Compute the bounding box (axis oriented) of the points in the mask,
 		# then crop the given image on that region.
 		row, col = np.nonzero(mask)
-		img = img[min(row):max(row), min(col):max(col)]
-		# Save the image
-		scipy.misc.imsave(out_file, img)
+		# Enlarge small ROIs
+		U, D = min(row), max(row)
+		if D-U < img_shape[0]:
+			diff = math.ceil( (img_shape[0]-D+U)/2 )
+			U = max([U-diff, 0]) # never below 0
+			D = U+img_shape[0] # error only if img_shape bigger than original
+		L, R = min(col), max(col)
+		if R-L < img_shape[1]:
+			diff = math.ceil( (img_shape[1]-R+L)/2 )
+			L = max([L-diff, 0])
+			R = L+img_shape[1]
+		# Crop to ROI
+		try:
+			img = img[U:D, L:R]
+		except:
+			return
+
+		if not args["no_rnd_crop"]:
+			# Check if the dimension of the image is sufficient
+			if img.shape[0] >= img_shape[0] and img.shape[1] >= img_shape[1]:
+				# Save images for training
+				for n in range(N):
+					tmp = random_crop_and_norm(img, img_shape)
+					scipy.misc.imsave(os.path.join(out_dir_train, out_file+'_'+str(n)+'.'+out_ext), tmp)
+				# Save images for validation
+				for n in range(V):
+					tmp = random_crop_and_norm(img, img_shape)
+					scipy.misc.imsave(os.path.join(out_dir_val, out_file+'_'+str(n)+'.'+out_ext), tmp)
+			else: print("Relevant part too small for", out_file)
+		else:
+			scipy.misc.imsave(os.path.join(out_dir, out_file+'.'+out_ext), img)
 	
 	# Parallel execution
 	with Pool(psutil.cpu_count()) as p:
