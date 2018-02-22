@@ -15,3 +15,4 @@ considerare sempre il tempo stimato (su resnet50 28s/epoch)
 500*28 = 14 000 s		=>		>233 m	=>	> 4h
 
 
+floyd run --env tensorflow-1.4 --data unipippo/datasets/sd09_segmentation/2:data --tensorboard 'pip install git+https://www.github.com/keras-team/keras-contrib.git && python logits_from_pretrained.py /data /output -N 100 -V 10 -B 128'

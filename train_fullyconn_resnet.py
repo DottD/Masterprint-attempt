@@ -9,17 +9,19 @@ try:
 except:
 	import tensorflow as tf
 from keras import backend as K
-from keras.layers import Dense
+from keras.layers import Input, Dense
 from keras.losses import binary_crossentropy
 from keras.metrics import top_k_categorical_accuracy
 from keras.models import Model, load_model
 from keras.regularizers import l2
 from keras.optimizers import Adam
+from keras.utils import HDF5Matrix
 from keras.callbacks import Callback, ProgbarLogger, TerminateOnNaN, ModelCheckpoint, LearningRateScheduler, LambdaCallback, ReduceLROnPlateau, EarlyStopping
 from keras.applications import ResNet50
 from my_keras_preproc_image import ImageDataGenerator
 from tensorboard_logging import Logger
 from thumb_from_sd09 import scan_dir
+import h5py
 
 	
 def binary_sparse_softmax_cross_entropy(target, output, from_logits=False):
@@ -48,16 +50,42 @@ def binary_sparse_softmax_cross_entropy(target, output, from_logits=False):
 		return res
 
 class TensorboardCallback(Callback):
-	def __init__(self, logger, args=None):
-		self.logger = logger
+	def __init__(self, path, args=None, events_file=None, max_step=None, save_period=10):
+		self.save_period = save_period
+		self.path = path
+		train_dir = os.path.join(path, 'training')
+		if not os.path.exists(train_dir): os.makedirs(train_dir)
+		self.train_logger = Logger(train_dir)
+		valid_dir = os.path.join(path, 'validation')
+		if not os.path.exists(valid_dir): os.makedirs(valid_dir)
+		self.valid_logger = Logger(valid_dir)
+		if args:
+			text = 'Parameters\n---------\n'
+			for (key, val) in args.items():
+				text += '- '+key+' = '+str(val)+'\n'
+			self.train_logger.log_text('Description', text)
+			self.valid_logger.log_text('Description', text)
+		if events_file and max_step:
+			self.train_logger.copyFrom(load_events_file, max_step=max_step)
+			self.valid_logger.copyFrom(load_events_file, max_step=max_step)
 	def on_epoch_begin(self, epoch, logs={}):
 		self.starttime=time()
 	def on_epoch_end(self, epoch, logs={}):
-		self.logger.log_scalar("Speed", time()-self.starttime, epoch)
-		self.logger.log_scalar("Validation/sparse_categorical_accuracy_%", logs['val_sparse_categorical_accuracy']*100, epoch)
-		self.logger.log_scalar("Validation/loss", logs['val_loss'], epoch)
-		self.logger.log_scalar("Training/sparse_categorical_accuracy_%", logs['sparse_categorical_accuracy']*100, epoch)
-		self.logger.log_scalar("Training/loss", logs['loss'], epoch)
+		self.train_logger.log_scalar("Speed", time()-self.starttime, epoch)
+		self.train_logger.log_scalar("sparse_categorical_accuracy_%", logs['sparse_categorical_accuracy']*100, epoch)
+		self.train_logger.log_scalar("loss", logs['loss'], epoch)
+		self.valid_logger.log_scalar("Speed", time()-self.starttime, epoch)
+		self.valid_logger.log_scalar("sparse_categorical_accuracy_%", logs['val_sparse_categorical_accuracy']*100, epoch)
+		self.valid_logger.log_scalar("loss", logs['val_loss'], epoch)
+		# Model save
+		if epoch % self.save_period == 0:
+			self.model.save(os.path.join(self.path, 'save_'+str(epoch)+'.h5'))
+			_, oldsaves = scan_dir(self.path, '.h5')
+			for save in oldsaves:
+				try:
+					if int(save.split('.')[-2].split('_')[-1]) < epoch:
+						os.remove(save)
+				except: continue
 
 if __name__ == '__main__':
 	tuplify = lambda fn: lambda str_: [fn(x) for x in str_.split('/')]
@@ -65,15 +93,15 @@ if __name__ == '__main__':
 	checkImgSize = lambda strin: tuple(int(val) for val in strin.split('x'))
 	# Parse command line arguments
 	parser = argparse.ArgumentParser(description="Train a classifier for fingerprints")
-	parser.add_argument("in", help="Full path to the input database directory")
+	parser.add_argument("in", help="Full path to the input database file (HDF5)")
 	parser.add_argument("out", help="Name of the output folder, created in the current directory")
 	parser.add_argument("--load", default=None, help="Name of the folder containing the pre-trained model")
-	parser.add_argument("--img-size", default=(128, 128, 1), type=checkImgSize, help="Expected image size in the form 'WxHxD', W=width, H=height, D=depth")
 	parser.add_argument("--save-epochs", default=50, type=int, help="Save checkpoint every this many epochs")
 	parser.add_argument("-E", "--epochs", default=200, type=int, help="Number of training steps")
 	# Batch run support
+	# Batch run support
 	parser.add_argument("-B", "--batch-size", default=[64], type=tuplify(int), help="Number of images to feed per iteration (support batch run through '/' separator)")
-	parser.add_argument("-L", "--learning-rate", default=[20E-5], type=tuplify(float), help="Learning rate for Adam optimizer (support batch run through '/' separator)")
+	parser.add_argument("-L", "--learning-rate", default=[1E-6], type=tuplify(float), help="Learning rate for Adam optimizer (support batch run through '/' separator)")
 	parser.add_argument("-D", "--decay-rate", default=[None], type=tuplify(float), help="Decay rate for Adam optimizer (support batch run through '/' separator)")
 	parser.add_argument("--ES-patience", default=[None], type=tuplify(int), help="Early stopping patience (support batch run through '/' separator)")
 	parser.add_argument("--ES-mindelta", default=[None], type=tuplify(float), help="Early stopping minimum difference (support batch run through '/' separator)")
@@ -86,11 +114,48 @@ if __name__ == '__main__':
 	print()
 			
 	# Set fixed parameters from cmd line arguments
-	img_shape = args["img_size"]
-	img_size = img_shape[0]
 	nb_epoch = args["epochs"]
 	db_path = os.path.abspath(os.path.normpath(args["in"]))
 	load_path = args["load"]
+	
+	# Load data
+	with h5py.File(db_path, "r") as f:
+		if 'training' in f.keys() and 'validation' in f.keys():
+			train_db = f['training']
+			valid_db = f['validation']
+			if 'num_classes' in train_db.attrs and 'repetitions' in train_db.attrs:
+				train_N, train_num_classes = train_db.attrs['repetitions'], train_db.attrs['num_classes']
+			else: raise ValueError("The training dataset lacks 'num_classes' and 'repetitions' attributes")
+			if 'num_classes' in valid_db.attrs and 'repetitions' in valid_db.attrs:
+				valid_N, valid_num_classes = valid_db.attrs['repetitions'], valid_db.attrs['num_classes']
+			else: raise ValueError("The validation dataset lacks 'num_classes' and 'repetitions' attributes")
+			if train_num_classes != valid_num_classes:
+				raise ValueError("The number of classes in training and validation databases differ")
+			num_classes = train_num_classes
+		else: raise ValueError("The input database lacks training and validation datasets")
+	print("Training and validation data loaded")
+	print("Training data:", num_classes, "classes repeated", train_N, "times")
+	print("Validation data:", num_classes, "classes repeated", valid_N, "times")
+		
+	train_data = HDF5Matrix(db_path, 'training')
+	valid_data = HDF5Matrix(db_path, 'validation')
+	train_labels = numpy.tile(numpy.arange(num_classes), (train_N,))
+	valid_labels = numpy.tile(numpy.arange(num_classes), (valid_N,))
+	print(train_data.shape, train_labels.shape)
+	print(valid_data.shape, valid_labels.shape)
+	
+	if train_data.shape[1] != valid_data.shape[1]:
+		ValueError("Different model used for training and validation, not allowed")
+	logits_length = train_data.shape[1]
+	# Get info about loaded data
+	additional_info = {
+		'Logits length': logits_length,
+		'Number of classes': num_classes,
+		'DB training repetitions': train_N,
+		'Training samples': train_data.shape[0],
+		'DB validation repetitions': valid_N,
+		'Validation samples': valid_data.shape[0]
+	}
 	
 	# Define the function that will be executed for each parameter
 	def runOnce(**roargs):
@@ -101,107 +166,49 @@ if __name__ == '__main__':
 		EarlyStopping_mindelta =  roargs["ES_mindelta"]
 		ReduceLROnPlateau_patience = roargs["RLROP_patience"]
 		ReduceLROnPlateau_factor = roargs["RLROP_factor"]
+		roargs.update(roargs["additional_info"])
+		roargs.pop("additional_info", None)
 
-		# I/O Folders
 		summary_folder = str(datetime.now().isoformat(sep='_', timespec='seconds')).replace(':', '_').replace('-', '_')
 		log_dir = os.path.join(os.path.abspath(args["out"]), summary_folder)
 		if not os.path.exists(log_dir): os.makedirs(log_dir)
 		print('Created log folder:', log_dir)
-		logger = Logger(log_dir)
 		if load_path:
 			load_events_file = [F for F in scan_dir(os.path.dirname(load_path), '')[1] if os.path.basename(F).startswith('events')][0]
 			initial_epoch = int(load_path.split('_')[-1].split('.')[0])
-			logger.copyFrom(load_events_file, max_step=initial_epoch)
+			# Model creation
+			model = load_model(load_path, custom_objects={'binary_sparse_softmax_cross_entropy': binary_sparse_softmax_cross_entropy})
 		else:
 			initial_epoch = 0
-		
-		# Load data
-		# image is augmented, then preproc_fn
-		def preproc_fn(x):
-			x -= numpy.mean(x, keepdims=True)
-			x /= (numpy.std(x, keepdims=True) + 1E-7)
-			x = .5 * (numpy.tanh(.5 * x) + 1) # this is a sigmoid
-			return x
-			
-		datagen = ImageDataGenerator(
-			width_shift_range=0.2,
-			height_shift_range=0.2,
-			rotation_range = 50, # degrees (int)
-			shear_range = 20.*numpy.pi/180., # radians (float)
-			zoom_range = 0.1,
-			fill_mode = 'constant',
-			cval = 0,
-			horizontal_flip = True
-			preprocessing_function = preproc_fn)
-		idg_args = {
-			'target_size': (200,200),
-			'color_mode':'rgb',
-			'crop_shape': img_shape[:-1],
-			'class_mode': 'sparse',
-			'batch_size': batch_size
-		}
-		train_provider = datagen.flow_from_directory(db_path, **idg_args)
-		valid_provider = datagen.flow_from_directory(db_path, **idg_args)
-		
-		# Get info about loaded data
-		num_classes = train_provider.num_classes
-		roargs['Training classes'] = num_classes
-		roargs['Training samples'] = train_provider.samples
-		roargs['Validation classes'] = valid_provider.num_classes
-		roargs['Validation samples'] = valid_provider.samples
-				
-		# Eventually load pre-trained weights
-		if load_path:
-			CNN = load_model(load_path, custom_objects={'binary_sparse_softmax_cross_entropy': binary_sparse_softmax_cross_entropy})
-		else:
-			# Set up the network
-			CNN = ResNet50(include_top=False,
-				weights='imagenet',
-				input_shape=(200,200,3),
-				pooling='avg')
-			# Freeze pre-trained model
-			for layer in CNN.layers: layer.trainable = False
-			# Add final fully connected layer
-			CNN = Model(inputs=CNN.inputs[0], outputs=Dense(num_classes, activation='sigmoid', kernel_initializer="he_normal")(CNN.outputs[0]))
-			# Compilation
-			CNN.compile(optimizer=Adam(lr=learning_rate, amsgrad=True), 
-					loss=binary_sparse_softmax_cross_entropy, # mutually exclusive classes, independent per-class distributions
-					metrics=["sparse_categorical_accuracy"])
-				
-		# Append the model description to text
-		trainable_count = int(
-			numpy.sum([K.count_params(p) for p in set(CNN.trainable_weights)]))
-		non_trainable_count = int(
-			numpy.sum([K.count_params(p) for p in set(CNN.non_trainable_weights)]))
+			# Model creation
+			logits = Input(shape=(logits_length,))
+			prediction = Dense(num_classes, activation='sigmoid', kernel_initializer="he_normal")(logits)
+			model = Model(inputs=logits, outputs=prediction)
+			model.compile(optimizer=Adam(lr=learning_rate, amsgrad=True), 
+				loss=binary_sparse_softmax_cross_entropy, # mutually exclusive classes, independent per-class distributions
+				metrics=["sparse_categorical_accuracy"])
+		# Model description
+		trainable_count = int(numpy.sum([K.count_params(p) for p in set(model.trainable_weights)]))
+		non_trainable_count = int(numpy.sum([K.count_params(p) for p in set(model.non_trainable_weights)]))
 		roargs['Total parameters'] = trainable_count+non_trainable_count
 		roargs['Trainable parameters'] = trainable_count
 		roargs['Non-trainable parameters'] = non_trainable_count
+		# Create custom callback
+		if load_path: tensorboardCallback = TensorboardCallback(log_dir, roargs, load_events_file, initial_epoch, save_period=args["save_epochs"])
+		else: tensorboardCallback = TensorboardCallback(log_dir, roargs, save_period=args["save_epochs"])
 		# Save other information about the model
 		with open(os.path.join(log_dir, 'summary_'+summary_folder+'.txt'), mode='w') as F:
 			print2F = lambda s: F.write(s+'\n')
 			print2F('------')
 			print2F("Parameters:")
-			for (key, val) in args.items():
+			for (key, val) in roargs.items():
 				print2F(str(key)+' = '+str(val))
 			print2F('------')
 			print2F('Logs will be summarized in ' + log_dir)
-			CNN.summary(print_fn=print2F)
-
-		# Log information about the model and the parameters
-		text = 'Parameters\n---------\n'
-		for (key, val) in args.items():
-			text += '- '+key+' = '+str(val)+'\n'
-		logger.log_text('Description', text)
+			model.summary(print_fn=print2F)
 			
 		# List of callbacks
-		callbacks = [TerminateOnNaN(), TensorboardCallback(logger)]
-		callbacks.append(ModelCheckpoint(os.path.join(log_dir, 'save_'+summary_folder+'_{epoch:d}.h5'),
-			monitor='val_loss', 
-			verbose=0,
-			save_best_only=False,
-			save_weights_only=False,
-			mode='min',
-			period=args["save_epochs"]))
+		callbacks = [TerminateOnNaN(), tensorboardCallback]
 		if decay_rate and decay_rate > 0:
 			compute_lr = lambda e: learning_rate * 1./(1. + decay_rate * e)
 			callbacks.append(LearningRateScheduler(compute_lr, verbose=1))
@@ -211,22 +218,15 @@ if __name__ == '__main__':
 			callbacks.append(ReduceLROnPlateau(monitor='val_loss', factor=ReduceLROnPlateau_factor, patience=ReduceLROnPlateau_patience, verbose=1, mode='min', epsilon=0.0001, cooldown=0, min_lr=0))
 		
 		# Training
-		try:
-			CNN.fit_generator(train_provider, 
-				steps_per_epoch=None, # if unspecified, will use the len(generator) as a number of steps
-				epochs=nb_epoch,
-				verbose=2,
-				callbacks=callbacks,
-				validation_data=valid_provider,
-				validation_steps=None, # if unspecified, will use the len(validation_data) as a number of steps
-				class_weight=None,
-				max_queue_size=10,
-				workers=2,
-				use_multiprocessing=True,
-				shuffle=True, # false because the generator provides the batches randomly
-				initial_epoch=initial_epoch)
-		except KeyboardInterrupt:
-			print("Training interrupted")
+		model.fit(x = train_data, 
+			y = train_labels,
+			batch_size = batch_size,
+			epochs=nb_epoch,
+			verbose=0,
+			callbacks=callbacks,
+			validation_data=(valid_data, valid_labels),
+			shuffle=False,
+			initial_epoch=initial_epoch)
 
 	# Set variable parameters from cmd line args
 	tests = [len(list_) for list_ in args.values() if isinstance(list_, list)]
@@ -246,4 +246,5 @@ if __name__ == '__main__':
 									ES_patience = ES_patience,
 									ES_mindelta =  ES_mindelta,
 									RLROP_patience = RLROP_patience,
-									RLROP_factor = RLROP_factor)
+									RLROP_factor = RLROP_factor,
+									additional_info = additional_info)
