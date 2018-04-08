@@ -9,7 +9,7 @@ try:
 except:
 	import tensorflow as tf
 from keras import backend as K
-from keras.layers import Input, Dense
+from keras.layers import Input, Dense, ELU, Dropout, BatchNormalization
 from keras.losses import binary_crossentropy
 from keras.metrics import top_k_categorical_accuracy
 from keras.models import Model, load_model
@@ -50,7 +50,7 @@ def binary_sparse_softmax_cross_entropy(target, output, from_logits=False):
 		return res
 
 class TensorboardCallback(Callback):
-	def __init__(self, path, args=None, events_file=None, max_step=None, save_period=10):
+	def __init__(self, path, args=None, events_dir=None, max_step=None, save_period=10):
 		self.save_period = save_period
 		self.path = path
 		train_dir = os.path.join(path, 'training')
@@ -65,9 +65,16 @@ class TensorboardCallback(Callback):
 				text += '- '+key+' = '+str(val)+'\n'
 			self.train_logger.log_text('Description', text)
 			self.valid_logger.log_text('Description', text)
-		if events_file and max_step:
-			self.train_logger.copyFrom(load_events_file, max_step=max_step)
-			self.valid_logger.copyFrom(load_events_file, max_step=max_step)
+		if events_dir and max_step:
+			events_files = [F for F in scan_dir(events_dir, '')[1] if os.path.basename(F).startswith('events')]
+			for events_file in events_files:
+				parent_dir = os.path.dirname(events_file).split(os.sep)[-1]
+				if 'training' == parent_dir:
+					train_events_file = events_file
+				elif 'validation' == parent_dir:
+					valid_events_file = events_file
+			self.train_logger.copyFrom(train_events_file, max_step=max_step)
+			self.valid_logger.copyFrom(valid_events_file, max_step=max_step)
 	def on_epoch_begin(self, epoch, logs={}):
 		self.starttime=time()
 	def on_epoch_end(self, epoch, logs={}):
@@ -78,7 +85,7 @@ class TensorboardCallback(Callback):
 		self.valid_logger.log_scalar("sparse_categorical_accuracy_%", logs['val_sparse_categorical_accuracy']*100, epoch)
 		self.valid_logger.log_scalar("loss", logs['val_loss'], epoch)
 		# Model save
-		if epoch % self.save_period == 0:
+		if ((epoch+1) % self.save_period) == 0:
 			self.model.save(os.path.join(self.path, 'save_'+str(epoch)+'.h5'))
 			_, oldsaves = scan_dir(self.path, '.h5')
 			for save in oldsaves:
@@ -174,7 +181,6 @@ if __name__ == '__main__':
 		if not os.path.exists(log_dir): os.makedirs(log_dir)
 		print('Created log folder:', log_dir)
 		if load_path:
-			load_events_file = [F for F in scan_dir(os.path.dirname(load_path), '')[1] if os.path.basename(F).startswith('events')][0]
 			initial_epoch = int(load_path.split('_')[-1].split('.')[0])
 			# Model creation
 			model = load_model(load_path, custom_objects={'binary_sparse_softmax_cross_entropy': binary_sparse_softmax_cross_entropy})
@@ -182,7 +188,14 @@ if __name__ == '__main__':
 			initial_epoch = 0
 			# Model creation
 			logits = Input(shape=(logits_length,))
-			prediction = Dense(num_classes, activation='sigmoid', kernel_initializer="he_normal")(logits)
+			prediction = logits
+#			n_filters_0 = 512
+#			for n_filters in range(3):
+#				prediction = Dense(int(512/4**n_filters), kernel_initializer="he_normal", kernel_regularizer=l2(0.01))(prediction)
+#				prediction = ELU(0.3)(prediction)
+#				prediction = BatchNormalization()(prediction)
+#				prediction = Dropout(0.5)(prediction)
+			prediction = Dense(num_classes, activation='sigmoid', kernel_initializer="he_normal")(prediction)
 			model = Model(inputs=logits, outputs=prediction)
 			model.compile(optimizer=Adam(lr=learning_rate, amsgrad=True), 
 				loss=binary_sparse_softmax_cross_entropy, # mutually exclusive classes, independent per-class distributions
@@ -194,7 +207,7 @@ if __name__ == '__main__':
 		roargs['Trainable parameters'] = trainable_count
 		roargs['Non-trainable parameters'] = non_trainable_count
 		# Create custom callback
-		if load_path: tensorboardCallback = TensorboardCallback(log_dir, roargs, load_events_file, initial_epoch, save_period=args["save_epochs"])
+		if load_path: tensorboardCallback = TensorboardCallback(log_dir, roargs, os.path.dirname(load_path), initial_epoch, save_period=args["save_epochs"])
 		else: tensorboardCallback = TensorboardCallback(log_dir, roargs, save_period=args["save_epochs"])
 		# Save other information about the model
 		with open(os.path.join(log_dir, 'summary_'+summary_folder+'.txt'), mode='w') as F:
@@ -211,11 +224,11 @@ if __name__ == '__main__':
 		callbacks = [TerminateOnNaN(), tensorboardCallback]
 		if decay_rate and decay_rate > 0:
 			compute_lr = lambda e: learning_rate * 1./(1. + decay_rate * e)
-			callbacks.append(LearningRateScheduler(compute_lr, verbose=1))
+			callbacks.append(LearningRateScheduler(compute_lr, verbose=0))
 		if EarlyStopping_mindelta and EarlyStopping_patience:
 			callbacks.append(EarlyStopping(monitor='val_loss', min_delta=EarlyStopping_mindelta, patience=EarlyStopping_patience, verbose=1, mode='min'))
 		if ReduceLROnPlateau_factor and ReduceLROnPlateau_patience and ReduceLROnPlateau_factor <  1:
-			callbacks.append(ReduceLROnPlateau(monitor='val_loss', factor=ReduceLROnPlateau_factor, patience=ReduceLROnPlateau_patience, verbose=1, mode='min', epsilon=0.0001, cooldown=0, min_lr=0))
+			callbacks.append(ReduceLROnPlateau(monitor='val_loss', factor=ReduceLROnPlateau_factor, patience=ReduceLROnPlateau_patience, verbose=1, mode='min', epsilon=0.0001, cooldown=0, min_lr=1e-10))
 		
 		# Training
 		model.fit(x = train_data, 

@@ -33,7 +33,7 @@ class Logger(object):
 		summary = tf.Summary(value=[tf.Summary.Value(tag=tag,
 													 simple_value=value)])
 		self.writer.add_summary(summary, step)
-		self.writer.flush()
+#		self.writer.flush()
 
 	def log_images(self, tag, images, step):
 		"""Logs a list of images."""
@@ -56,7 +56,7 @@ class Logger(object):
 		# Create and write Summary
 		summary = tf.Summary(value=im_summaries)
 		self.writer.add_summary(summary, step)
-		self.writer.flush()
+#		self.writer.flush()
 		
 
 	def log_histogram(self, tag, values, step, bins=1000, keep=None):
@@ -99,7 +99,7 @@ class Logger(object):
 		# Create and write Summary
 		summary = tf.Summary(value=[tf.Summary.Value(tag=tag, histo=hist)])
 		self.writer.add_summary(summary, step)
-		self.writer.flush()
+#		self.writer.flush()
 		
 	def log_text(self, tag, text, step=None):
 		text_tensor = tf.make_tensor_proto(text, dtype=tf.string)
@@ -108,7 +108,7 @@ class Logger(object):
 		summary = tf.Summary()
 		summary.value.add(tag=tag, metadata=meta, tensor=text_tensor)
 		self.writer.add_summary(summary, step)
-		self.writer.flush()
+#		self.writer.flush()
 		
 	def copyFrom(self, path, max_step=None):
 		"""
@@ -117,7 +117,7 @@ class Logger(object):
 		for e in tf.train.summary_iterator(path):
 			if not max_step or max_step > e.step:
 				self.writer.add_summary(e.summary, e.step)
-				self.writer.flush()
+#				self.writer.flush()
 			else:
 				return
 		
