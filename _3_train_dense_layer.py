@@ -22,6 +22,7 @@ from my_keras_preproc_image import ImageDataGenerator
 from tensorboard_logging import Logger
 from thumb_from_sd09 import scan_dir
 import h5py
+from kerastoolbox.callbacks import TelegramMonitor, PrintMonitor
 
 	
 def binary_sparse_softmax_cross_entropy(target, output, from_logits=False):
@@ -221,7 +222,8 @@ if __name__ == '__main__':
 			model.summary(print_fn=print2F)
 			
 		# List of callbacks
-		callbacks = [TerminateOnNaN(), tensorboardCallback]
+		callbacks = [TerminateOnNaN(), tensorboardCallback,
+			TelegramMonitor(api_token="546794449:AAGzmfH9Oa6277Vsl2T9hRrGnNHHSpEMsd8", chat_id="41795159", plot_history=1)]
 		if decay_rate and decay_rate > 0:
 			compute_lr = lambda e: learning_rate * 1./(1. + decay_rate * e)
 			callbacks.append(LearningRateScheduler(compute_lr, verbose=0))

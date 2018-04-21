@@ -10,6 +10,8 @@ from h5datagen import H5DataGen
 import h5py
 from shutil import copyfile
 from convnetskeras.alexnet import AlexNet 
+from kerastoolbox.callbacks import TelegramMonitor, PrintMonitor
+from io import StringIO
 
 
 if __name__ == '__main__':
@@ -23,6 +25,16 @@ if __name__ == '__main__':
 	parser.add_argument("-V", "--num-val-partials", default=10, type=int, help="Number of partial images per finger (validation)")
 	parser.add_argument("-A", "--arch", default='alexnet', type=str, help="Network architecture")
 	args = vars(parser.parse_args())
+	# Set up some monitors
+	monitors = [
+		TelegramMonitor(api_token="546794449:AAGzmfH9Oa6277Vsl2T9hRrGnNHHSpEMsd8", chat_id="41795159", plot_history=1),
+		PrintMonitor()]
+	def printmsg(*args):
+		output = StringIO()
+		print(*args, file=output, end='')
+		for monitor in monitors:
+			monitor.notify(message=output.getvalue())
+		output.close()
 	# Read input
 	read_mode = "a"
 	db_path = os.path.abspath(os.path.normpath(args["in"]))
@@ -64,6 +76,7 @@ if __name__ == '__main__':
 	}
 	data_provider = datagen.flow_from_h5file(db_path, **idg_args)
 	num_classes = data_provider.num_classes
+	printmsg("Found", data_provider.samples, "images belonging to", data_provider.num_classes, "classes.")
 	# Build network
 	if args["arch"] == 'resnet':
 		model = ResNet50(include_top=False,
@@ -79,13 +92,13 @@ if __name__ == '__main__':
 		raise ValueError("No such architecture implemented")
 	model.compile(optimizer='rmsprop', loss='mse')
 	n_logits = model.output_shape[1]
-	print("Network created -", n_logits, "logits")
+	printmsg("Network created -", n_logits, "logits")
 	# Start writing the databases
 	with h5py.File(filename, read_mode) as f:
-		print("Output file", filename, "readed")
+		printmsg("Output file", filename, "opened")
 		def db_append(name, rep):
 			if not name in f.keys():
-				print("The "+name+" dataset will be created")
+				printmsg("The "+name+" dataset will be created")
 				db = f.create_dataset(name=name, 
 					shape=(rep*num_classes, n_logits), dtype='f',
 					maxshape=(None, n_logits),
@@ -94,7 +107,7 @@ if __name__ == '__main__':
 				db.attrs['num_classes'] = num_classes
 				db.attrs['repetitions'] = rep
 				prev_rep = 0
-				print("Created dataset", name, "("+str(rep)+" repetitions)")
+				printmsg("Created dataset", name, "("+str(rep)+" repetitions)")
 			else:
 				db = f[name]
 				if (not 'num_classes' in db.attrs) or db.attrs['num_classes'] != num_classes:
@@ -104,11 +117,11 @@ if __name__ == '__main__':
 				prev_rep = db.attrs['repetitions']
 				db.attrs['repetitions'] += rep
 				db.resize((db.shape[0]+rep*num_classes, db.shape[1]))
-				print("Appending logits for", rep, "repetitions of", num_classes, "classes to dataset", name, "(total "+str(db.attrs['repetitions'])+" repetitions)")
+				printmsg("Appending logits for", rep, "repetitions of", num_classes, "classes to dataset", name, "(total "+str(db.attrs['repetitions'])+" repetitions)")
 			for k in range(prev_rep, db.attrs['repetitions']):
 				begin = k * num_classes # inclusive
 				end = (k+1) * num_classes # exclusive
 				db[begin:end, :] = model.predict_generator(data_provider, verbose=1, workers=2)
-				print("Step", k+1, "/", db.attrs['repetitions'], "- slice", str(begin)+':'+str(end), "DONE")
+				printmsg("Step", k+1, "/", db.attrs['repetitions'], "- slice", str(begin)+':'+str(end), "DONE")
 		db_append('training', N)
 		db_append('validation', V)

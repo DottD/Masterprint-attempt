@@ -261,7 +261,7 @@ if __name__ == '__main__':
 			mask = mask[min(rows):max(rows), min(cols):max(cols)]
 			img = img[min(rows):max(rows), min(cols):max(cols)]
 			# Find all the possible top-left corner for partial fingerprints
-			tops, lefts = find_roi_pos(mask, roi_shape=img_shape[:-1], step=4)
+			tops, lefts = find_roi_pos(mask, roi_shape=img_shape[:-1], step=12)
 			# Save image as array of uint8
 			imgdt = np.dtype('uint8')
 			if not 'images' in grp.keys():
