@@ -1,3 +1,6 @@
+#!/usr/bin/python
+# -*- coding: UTF-8 -*-
+
 """
 Extraction of thumbs from sd09 dataset
 """
@@ -103,38 +106,74 @@ def cart2pol(_mat, N):
 	Transform an XY matrix in a rho-theta matrix.
 	N is the number of angles used in the process.
 	"""
+	dx = 1.0 # N dx = pi r
+	output_theta = np.linspace(0, np.pi, N)
 	# Force mat to be a square
 	if _mat.shape[0] != _mat.shape[1]:
 		mat = cropToMaxEnclosedSquare(_mat)
+	# Get matrix information
 	mat_size = mat.shape[0]
 	mat_center = mat_size/2.0+0.5
-	theta_span = np.linspace(0, np.pi, N)
-	rad_span = np.arange(0, mat_center)
-	theta, rad = np.meshgrid(theta_span, rad_span)
-	xx = rad * np.cos(theta) + mat_center
-	yy = rad * np.sin(theta) + mat_center
+	# Create interpolator
 	xy_span = np.arange(0, mat_size)
 	interpolator = scipy.interpolate.RectBivariateSpline(xy_span, xy_span, mat)
-	return interpolator.ev(xx, yy)
+	# Create array of radii
+	rad_span = np.arange(0, mat_center)
+	# Initialize the output matrix
+	output = np.zeros([len(rad_span), len(output_theta)])
+	# For each radius create the array of angles, then interpolate over those points,
+	# and resample to get N points
+	for rad in rad_span:
+		if rad == 0:
+			output[int(rad), :] = np.ones_like(output_theta) * interpolator.ev(mat_center, mat_center)
+		else:
+			NP = int(np.pi*rad/dx)
+			theta = np.linspace(0, np.pi, NP)
+			xx = rad * np.cos(theta) + mat_center
+			yy = rad * np.sin(theta) + mat_center
+			circle = interpolator.ev(xx, yy)
+			if NP > 2*N:
+				circle = scipy.ndimage.filters.uniform_filter1d(circle, int(NP/N))
+			circle_interp = scipy.interpolate.interp1d(theta, circle)
+			output[int(rad), :] = circle_interp(output_theta)
+#	theta_span = np.linspace(0, np.pi, N)
+#	theta, rad = np.meshgrid(theta_span, rad_span)
+#	xx = rad * np.cos(theta) + mat_center
+#	yy = rad * np.sin(theta) + mat_center
+#	return interpolator.ev(xx, yy)
+	return output
 	
-def computeRidgeFrequency(image):
+def computeRidgeFrequency(image, allowed_range=None):
+	length = np.min(image.shape)
 	# Compute the FFT of the image using a gaussian window
 	kernel = hannWin2D(image.shape)
 	img = image * kernel
 	img = (img-img.mean()) / img.std()
 	img = np.fft.fftshift(np.absolute(np.fft.fft2(img)))
 	# Convert the image to polar representation
-	img = cart2pol(img, 16)
+	img = cart2pol(img, 32)
 	# Sum (L2-norm) along the angle axis, to get the energy for each circle
 	circle_energy = np.sqrt(np.sum(img**2, axis=1))
+	# Suppress low order terms
+	if allowed_range != None:
+		radii = np.arange(0, len(circle_energy))
+		radii_upper = radii < length/allowed_range[0]
+		radii_lower = radii > length/allowed_range[1]
+		radii_nallowed = np.logical_not(np.logical_and(radii_upper, radii_lower))
+		radii = radii[radii_nallowed]
+		circle_energy[radii] = circle_energy.min()
 	# Find the most energetic circle
 	circle_logen = np.log(circle_energy)
 	circle_logen = scipy.ndimage.filters.gaussian_filter(circle_logen, sigma=2, mode="nearest")
 	peakind, _ = peakdet(circle_logen, circle_logen.std()/2)
-	if len(peakind)==0 or peakind[0, 0]==0:
+	if len(peakind)==0:
 		return 10
 	else:
-		return img.shape[0]/peakind[0, 0]
+		max_peak = np.argmax(peakind[:,1])
+		if peakind[max_peak, 0]==0:
+			return 10
+		else:
+			return length/peakind[max_peak, 0]
 		
 def segmentation(image, _f, p):
 	"""
@@ -154,7 +193,7 @@ def segmentation(image, _f, p):
 	# Saturate the image and smooth the image
 	s = scipy.ndimage.filters.gaussian_filter(saturate_fn(s), _f//2, mode='nearest')
 	# Segmentation
-	foreground = (s >= p).astype(int)
+	foreground = (s >= 0.5).astype(int)
 #	# Take r as half the frequency
 #	f = math.ceil(_f/2)
 #	# Generate a circle window as neighborhood
@@ -170,14 +209,15 @@ def segmentation(image, _f, p):
 #	t = np.percentile(s, p)
 #	# Segmentation
 #	foreground = (s >= t).astype(int)
-	# Compute the connected components of the foreground and select the largest
-	label_im, n_labels = scipy.ndimage.label(foreground)
-	all_labels = np.arange(1, n_labels+1)
-	label_area = scipy.ndimage.labeled_comprehension(foreground, label_im, all_labels, np.sum, int, 0)
-	largest_idx = all_labels[np.argmax(label_area)]
-	foreground = (label_im == largest_idx).astype(int)
-	# Hole fill
-	foreground = scipy.ndimage.morphology.binary_fill_holes(foreground)
+	if np.count_nonzero(foreground) > 0:
+		# Compute the connected components of the foreground and select the largest
+		label_im, n_labels = scipy.ndimage.label(foreground)
+		all_labels = np.arange(1, n_labels+1)
+		label_area = scipy.ndimage.labeled_comprehension(foreground, label_im, all_labels, np.sum, int, 0)
+		largest_idx = all_labels[np.argmax(label_area)]
+		foreground = (label_im == largest_idx).astype(int)
+		# Hole fill
+		foreground = scipy.ndimage.morphology.binary_fill_holes(foreground)
 	return foreground
 	
 def find_roi_pos(mask, roi_shape=(128,128), step=None):
@@ -215,6 +255,7 @@ if __name__ == '__main__':
 		"subdirectory; the subdir's name will be thought of as the subject name.")
 	parser.add_argument("in", help="Path to the input database directory")
 	parser.add_argument("out", help="Path to the output database file")
+	parser.add_argument("-f", "--filter", default="_01.jpg", help="Filter applied to the list of files")
 	parser.add_argument("--img-shape", default=(128, 128, 1), 
 		type=lambda strin: tuple(int(val) for val in strin.split('x')),
 		help="Expected image shape in the form 'WxHxD', W=width, H=height, D=depth")
@@ -225,13 +266,14 @@ if __name__ == '__main__':
 			widgets.Bar(marker=u'\u2588'), ' ', widgets.Timer(), ' ', widgets.AdaptiveETA()]
 	
 	# Name the input arguments
+	t_level = 0.3
 	in_abs_dir = os.path.abspath(args["in"])
 	out_abs_dir = os.path.abspath(args["out"])
 	img_shape = args["img_shape"]
 	# Scan the directory to find the proper files
-#	_, thumbs_files = scan_dir(in_abs_dir, "_01.jpg")
-	_, thumbs_files = scan_dir(in_abs_dir, ".jpg")
+	_, thumbs_files = scan_dir(in_abs_dir, args["filter"])
 	num_classes = len(thumbs_files)
+	print("Found", num_classes, "people")
 	# Take the directory name as database name
 	db_name = os.path.basename(in_abs_dir)
 	# Eventually delete a previous group with the same name
@@ -253,15 +295,21 @@ if __name__ == '__main__':
 			# Read image
 			img = plt.imread(file)
 			# Compute ridge frequency
-			freq = computeRidgeFrequency(img)
+			freq = computeRidgeFrequency(img, [4,60])
 			# Segmentation
-			mask = segmentation(img, freq, 0.3)
-			# Crop image and mask to mask's bounding box
-			rows, cols = np.nonzero(mask)
-			mask = mask[min(rows):max(rows), min(cols):max(cols)]
-			img = img[min(rows):max(rows), min(cols):max(cols)]
-			# Find all the possible top-left corner for partial fingerprints
-			tops, lefts = find_roi_pos(mask, roi_shape=img_shape[:-1], step=12)
+			cur_t_level = t_level
+			while True:
+				mask = segmentation(img, freq, cur_t_level)
+				if np.count_nonzero(mask) > 0:
+					# Crop image and mask to mask's bounding box
+					rows, cols = np.nonzero(mask)
+					mask = mask[min(rows):max(rows), min(cols):max(cols)]
+					img = img[min(rows):max(rows), min(cols):max(cols)]
+					# Find all the possible top-left corner for partial fingerprints
+					tops, lefts = find_roi_pos(mask, roi_shape=img_shape[:-1], step=12)
+					if len(tops) > 0: break
+				cur_t_level *= 0.7
+				print("class_idx", class_idx, "t_level", cur_t_level, "zeros", np.count_nonzero(mask),"tops", len(tops), "file", file)
 			# Save image as array of uint8
 			imgdt = np.dtype('uint8')
 			if not 'images' in grp.keys():

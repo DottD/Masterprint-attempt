@@ -1,3 +1,6 @@
+#!/usr/bin/python
+# -*- coding: UTF-8 -*-
+
 """Simple example on how to log scalars and images to tensorboard without tensor ops.
 URL: https://gist.github.com/gyglim/1f8dfb1b5c82627ae3efcfbbadb9f514
 License: Copyleft
@@ -5,10 +8,10 @@ License: Copyleft
 __author__ = "Michael Gygli"
 
 import os
-import tensorflow as tf
+# import tensorflow as tf
+import tensorflow.compat.v1 as tf
 from io import BytesIO
 import matplotlib.pyplot as plt
-from thumb_from_sd09 import scan_dir
 import numpy as np
 import base64
 

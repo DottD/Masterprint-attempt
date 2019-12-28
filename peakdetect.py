@@ -1,3 +1,6 @@
+#!/usr/bin/python
+# -*- coding: UTF-8 -*-
+
 import sys
 from numpy import NaN, Inf, arange, isscalar, asarray, array
 

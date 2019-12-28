@@ -1,3 +1,6 @@
+#!/usr/bin/python
+# -*- coding: UTF-8 -*-
+
 import os
 import shutil
 from _1_segment_and_crop import scan_dir

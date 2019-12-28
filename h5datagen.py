@@ -1,7 +1,16 @@
+#!/usr/bin/python
+# -*- coding: UTF-8 -*-
+
+import random
 import numpy as np
 from keras import backend as K
-from keras.preprocessing.image import ImageDataGenerator, Iterator, pil_image, img_to_array
+from keras.preprocessing.image import ImageDataGenerator, Iterator, img_to_array
 import h5py
+
+try:
+	from PIL import Image as pil_image
+except ImportError:
+	pil_image = None
 
 if pil_image is not None:
 	_PIL_INTERPOLATION_METHODS = {
@@ -17,6 +26,14 @@ if pil_image is not None:
 	# This method is new in version 1.1.3 (2013).
 	if hasattr(pil_image, 'LANCZOS'):
 		_PIL_INTERPOLATION_METHODS['lanczos'] = pil_image.LANCZOS
+		
+def chunks(l, n):
+	"""
+	Yield successive n-sized chunks from l.
+	See https://stackoverflow.com/a/312464/6822728
+	"""
+	for i in range(0, len(l), n):
+		yield l[i:i + n]
 
 class H5DataGen(ImageDataGenerator):
 	""" Generate minibatches of image data with real-time data augmentation from an h5 db file. 
@@ -190,32 +207,19 @@ class H5FileIterator(Iterator):
 		self.save_format = save_format
 		self.interpolation = interpolation
 
-		# What follows is the list by group of the list by classes
-		# of (row, col) pairs of topleft coordinates
-		self.samples_per_class_per_grp = []
-		# What follows is a mapping from sample number to class number
-		self.classes = []
+		# Total number of classes
 		self.num_classes = 0
-		self.class_indices = dict()
-		# Scan groups
+		# Names of those classes
+		self.classes = []
+		# Total number of available ROIs
+		self.tot_samples = 0
 		for group_name in groups:
-			grp = self.h5file[group_name]
-			self.num_classes += grp['classes'].shape[0]
-			self.class_indices.update(dict((v,i) for i, v in enumerate(grp['classes'])))
-			# Scan classes
-			self.samples_per_class_per_grp.append(list())
-			for k in range(grp['topleft'].shape[0]):
-				topleft = grp['topleft'][k]
-				self.samples_per_class_per_grp[-1].append(topleft)
-				self.classes.extend(list(k for _ in range(int(len(topleft)/2))))
-		self.samples = sum(int(len(samples)/2)
-							for samples_per_class in self.samples_per_class_per_grp
-							for samples in samples_per_class)
-		self.classes = np.array(self.classes).astype(np.int32)
+			classes = self.h5file[group_name]['classes']
+			self.num_classes += classes.shape[0]
+			self.classes.extend(classes)
+			self.tot_samples += sum(len(line) for line in self.h5file[group_name]['topleft'])
 
-		print('Found %d images belonging to %d classes.' % (self.samples, self.num_classes))
-
-		super().__init__(self.samples, batch_size, shuffle, seed)
+		super().__init__(self.num_classes, batch_size, shuffle, seed)
 	
 	def _load_img(self, idx, 
 				grayscale=False, 
@@ -226,7 +230,7 @@ class H5FileIterator(Iterator):
 		shape using the given interpolation method and return it.
 
 		# Arguments
-				idx: Index of the image in the h5 file (regardless of group membership)
+				class_idx: Index of the image in the h5 file (regardless of group membership)
 				grayscale: Boolean, whether to load the image as grayscale.
 				target_size: Either `None` (default to original size)
 						or tuple of ints `(img_height, img_width)`.
@@ -243,54 +247,57 @@ class H5FileIterator(Iterator):
 		# Raises
 				ImportError: if PIL is not available.
 				ValueError: if interpolation method is not supported.
-				ValueError: if idx is out of range
+				ValueError: if class_idx is out of range
 		"""
-		# Convert idx into group, class and sample index
-		if not idx < self.samples:
-			raise ValueError("Idx out of range")
-		idx_cpy = idx
-		for k, samples_per_class in enumerate(self.samples_per_class_per_grp):
-			num_samples_per_grp = sum(int(len(samples)/2) for samples in samples_per_class)
-			if idx_cpy < num_samples_per_grp: 
-				group = list(self.h5file.keys())[k]
-				group_idx = k
-				break
-			else:
-				idx_cpy -= num_samples_per_grp
-		for k, samples in enumerate(self.samples_per_class_per_grp[group_idx]):
-			num_samples = int(len(samples)/2)
-			if idx_cpy < num_samples:
-				class_idx = k
-				break
-			else:
-				idx_cpy -= num_samples
-		sample_idx = idx_cpy
-		# Get the image in PIL format
 		if pil_image is None:
 			raise ImportError('Could not import PIL.Image. The use of `array_to_img` requires PIL.')
-		img = self.h5file[group]['images'][class_idx]
-		img = np.reshape(img, (self.h5file[group]['rows'][class_idx], -1))
-		img = pil_image.fromarray(img)
-		if grayscale:
-			if img.mode != 'L':
-				img = img.convert('L')
-		else:
-			if img.mode != 'RGB':
-				img = img.convert('RGB')
-		# Crop it according to top-left corner
-		row, col = self.samples_per_class_per_grp[group_idx][class_idx][2*sample_idx:2*sample_idx+2]
-		if all([img.size[i] >= self.sizes[group_idx][i] for i in range(2)]):
-			box = (col, row, col+self.sizes[group_idx][0], row+self.sizes[group_idx][1])
-			img = img.crop(box=box)
-		if target_size is not None:
-			width_height_tuple = (target_size[1], target_size[0])
-			if img.size != width_height_tuple:
-				if interpolation not in _PIL_INTERPOLATION_METHODS:
-					raise ValueError('Invalid interpolation method {} specified. Supported '
-						'methods are {}'.format(interpolation,", ".join(_PIL_INTERPOLATION_METHODS.keys())))
-				resample = _PIL_INTERPOLATION_METHODS[interpolation]
-				img = img.resize(width_height_tuple, resample)
-		return img
+		if idx >= self.num_classes:
+			raise ValueError("Idx out of range")
+		# Given the index (spanning among all the groups)
+		# get class name, image and list of top-left positions of available ROIs
+		k = 0
+		for group_idx, group_name in enumerate(self.groups):
+			with self.lock:
+				group = self.h5file[group_name]
+				num_classes = group['classes'].shape[0]
+			class_idx = idx-k
+			if class_idx < num_classes: # this is the group where it belongs to
+				# Load from file
+				with self.lock:
+					image = group['images'][class_idx]
+					topleft = group['topleft'][class_idx]
+					rows = group['rows'][class_idx]
+				# Get the image in PIL format
+				image = np.reshape(image, (rows, -1))
+				image = pil_image.fromarray(image)
+				if grayscale:
+					if image.mode != 'L':
+						image = image.convert('L')
+				else:
+					if image.mode != 'RGB':
+						image = image.convert('RGB')
+				# Crop it according to top-left corner
+				tl_idx = np.random.randint(0, len(topleft)//2)
+				row, col = topleft[2*tl_idx:2*tl_idx+2]
+				if all([image.size[i] >= self.sizes[group_idx][i] for i in range(2)]):
+					box = (col, row, col+self.sizes[group_idx][0], row+self.sizes[group_idx][1])
+					image = image.crop(box=box)
+				# Eventually resize the image according to target size
+				if target_size is not None:
+					width_height_tuple = (target_size[1], target_size[0])
+					if image.size != width_height_tuple:
+						if interpolation not in _PIL_INTERPOLATION_METHODS:
+							raise ValueError('Invalid interpolation method {} specified. Supported '
+								'methods are {}'.format(interpolation,", ".join(_PIL_INTERPOLATION_METHODS.keys())))
+						resample = _PIL_INTERPOLATION_METHODS[interpolation]
+						image = image.resize(width_height_tuple, resample)
+				# Finally return the image
+				return image
+			else:
+				# If this is not the correct group, continue increasing k
+				k += num_classes
+		# If no group has been found, then the index must have been out of range
+		raise ValueError("Idx out of range")
 
 	def _get_batches_of_transformed_samples(self, index_array):
 		batch_x = np.zeros((len(index_array),) + self.image_shape, dtype=K.floatx())
@@ -318,23 +325,25 @@ class H5FileIterator(Iterator):
 		if self.class_mode == 'input':
 			batch_y = batch_x.copy()
 		elif self.class_mode == 'sparse':
-			batch_y = self.classes[index_array]
+			batch_y = index_array
 		elif self.class_mode == 'binary':
-			batch_y = self.classes[index_array].astype(K.floatx())
+			batch_y = index_array.astype(K.floatx())
 		elif self.class_mode == 'categorical':
 			batch_y = np.zeros((len(batch_x), self.num_classes), dtype=K.floatx())
-			for i, label in enumerate(self.classes[index_array]):
+			for i, label in enumerate(index_array):
 				batch_y[i, label] = 1.
 		else:
 			return batch_x
 		return batch_x, batch_y
 
 	def next(self):
-		"""For python 2.x.
+		"""For python 2.x and called by __next__.
 
 		# Returns
 			The next batch.
 		"""
+		if self.total_batches_seen == self.__len__():
+			raise StopIteration
 		with self.lock:
 			index_array = next(self.index_generator)
 		# The transformation of images is not under thread lock
@@ -342,19 +351,27 @@ class H5FileIterator(Iterator):
 		return self._get_batches_of_transformed_samples(index_array)
 		
 if __name__ == '__main__':
-	import matplotlib.pyplot as plt
+	import time
+	import argparse
+	
+	parser = argparse.ArgumentParser(description="Attempting and timing database read")
+	parser.add_argument("database", help="Input database file path")
+	args = vars(parser.parse_args())
+	
 	target_size = (227,227)
 	K.set_image_data_format('channels_first')
 	datagen = H5DataGen()
 	idg_args = {
 		'target_size': target_size,
 		'color_mode':'rgb',
-		'class_mode': None,
-		'batch_size': 32,
+		'class_mode': 'categorical',
+		'batch_size': 256,
 		'shuffle': True
 	}
-	data_provider = datagen.flow_from_h5file("/Users/MacD/Databases/sd14_15_segmented_full.h5", **idg_args)
-	X = data_provider.next()
-	for n in range(X.shape[0]):
-		plt.imshow(np.squeeze(X[n,0,:,:]))
-		plt.show()
+	data_provider = datagen.flow_from_h5file(args["database"], **idg_args)
+	print("Length", len(data_provider))
+	start = time.time()
+	for k, (batch_x, batch_y) in enumerate(data_provider):
+		end = time.time()
+		print("time", end-start, "\t\tstep", k, "\t\tx:", batch_x.shape, "\ty:", batch_y.shape)
+		start = time.time()

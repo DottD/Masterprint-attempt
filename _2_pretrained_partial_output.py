@@ -1,5 +1,8 @@
+#!/usr/bin/python
+# -*- coding: UTF-8 -*-
+
 import os
-import sys # tmp
+import time # timing
 import argparse
 import numpy as np
 from keras import backend as K
@@ -76,7 +79,7 @@ if __name__ == '__main__':
 	}
 	data_provider = datagen.flow_from_h5file(db_path, **idg_args)
 	num_classes = data_provider.num_classes
-	printmsg("Found", data_provider.samples, "images belonging to", data_provider.num_classes, "classes.")
+	printmsg("Found", data_provider.tot_samples, "images belonging to", data_provider.num_classes, "classes.")
 	# Build network
 	if args["arch"] == 'resnet':
 		model = ResNet50(include_top=False,
@@ -121,7 +124,9 @@ if __name__ == '__main__':
 			for k in range(prev_rep, db.attrs['repetitions']):
 				begin = k * num_classes # inclusive
 				end = (k+1) * num_classes # exclusive
-				db[begin:end, :] = model.predict_generator(data_provider, verbose=1, workers=2)
-				printmsg("Step", k+1, "/", db.attrs['repetitions'], "- slice", str(begin)+':'+str(end), "DONE")
+				time_start = time.time()
+				db[begin:end, :] = model.predict_generator(data_provider, workers=2)
+				time_end = time.time()
+				printmsg("Step", k+1, "/", db.attrs['repetitions'], "- slice", str(begin)+':'+str(end), "DONE in", time_end-time_start, "s")
 		db_append('training', N)
 		db_append('validation', V)

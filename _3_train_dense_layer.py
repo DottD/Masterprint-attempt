@@ -1,9 +1,11 @@
+#!/usr/bin/python
+# -*- coding: UTF-8 -*-
+
 import os
 import argparse
 from time import time
 from datetime import datetime
-from shutil import copyfile
-import numpy
+import numpy as np
 try:
 	import tensorflow_gpu as tf
 except:
@@ -18,7 +20,6 @@ from keras.optimizers import Adam
 from keras.utils import HDF5Matrix
 from keras.callbacks import Callback, ProgbarLogger, TerminateOnNaN, ModelCheckpoint, LearningRateScheduler, LambdaCallback, ReduceLROnPlateau, EarlyStopping
 from keras.applications import ResNet50
-from my_keras_preproc_image import ImageDataGenerator
 from tensorboard_logging import Logger
 from thumb_from_sd09 import scan_dir
 import h5py
@@ -147,8 +148,8 @@ if __name__ == '__main__':
 		
 	train_data = HDF5Matrix(db_path, 'training')
 	valid_data = HDF5Matrix(db_path, 'validation')
-	train_labels = numpy.tile(numpy.arange(num_classes), (train_N,))
-	valid_labels = numpy.tile(numpy.arange(num_classes), (valid_N,))
+	train_labels = np.tile(np.arange(num_classes), (train_N,))
+	valid_labels = np.tile(np.arange(num_classes), (valid_N,))
 	print(train_data.shape, train_labels.shape)
 	print(valid_data.shape, valid_labels.shape)
 	
@@ -202,8 +203,8 @@ if __name__ == '__main__':
 				loss=binary_sparse_softmax_cross_entropy, # mutually exclusive classes, independent per-class distributions
 				metrics=["sparse_categorical_accuracy"])
 		# Model description
-		trainable_count = int(numpy.sum([K.count_params(p) for p in set(model.trainable_weights)]))
-		non_trainable_count = int(numpy.sum([K.count_params(p) for p in set(model.non_trainable_weights)]))
+		trainable_count = int(np.sum([K.count_params(p) for p in set(model.trainable_weights)]))
+		non_trainable_count = int(np.sum([K.count_params(p) for p in set(model.non_trainable_weights)]))
 		roargs['Total parameters'] = trainable_count+non_trainable_count
 		roargs['Trainable parameters'] = trainable_count
 		roargs['Non-trainable parameters'] = non_trainable_count
