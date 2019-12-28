@@ -9,7 +9,7 @@ parser.add_argument("in2", help="Input second database file path")
 args = vars(parser.parse_args())
 filename1 = args["in1"]
 filename2 = args["in2"]
-# Open both files and append the content of the second to the first
+# Open both files and append the content of the second to the first
 with h5py.File(filename1, 'a') as f1, h5py.File(filename2, 'r') as f2:
 	print("Output file", filename1, "and input file", filename2, "opened")
 	for name in f2.keys():
@@ -30,6 +30,6 @@ with h5py.File(filename1, 'a') as f1, h5py.File(filename2, 'r') as f2:
 			db.attrs['repetitions'] += irep
 			db.resize((db.shape[0]+irep*num_classes, db.shape[1]))
 			print("Appending logits for", irep, "repetitions of", num_classes, "classes to dataset", name, "(total "+str(db.attrs['repetitions'])+" repetitions)")
-			begin = prev_rep * num_classes # inclusive
+			begin = prev_rep * num_classes # inclusive
 			end = db.attrs['repetitions'] * num_classes # exclusive
 			db[begin:end, :] = idb[:, :]

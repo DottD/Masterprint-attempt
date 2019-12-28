@@ -60,7 +60,7 @@ def flatten(x):
 	for struct in x:
 		for X in struct:
 			out.append( 2 * (X[0]-C[0])/cols )
-			out.append( 2 * (X[1]-C[1])/rows ) # [-1,1] if inside the image
+			out.append( 2 * (X[1]-C[1])/rows ) # [-1,1] if inside the image
 			if len(X) > 2: 
 				out.extend( [y/np.pi*2 for y in X[2:]] ) # [-pi/2,pi/2] --> [-1,1]
 	return out

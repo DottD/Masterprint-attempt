@@ -86,7 +86,7 @@ class TensorboardCallback(Callback):
 		self.valid_logger.log_scalar("Speed", time()-self.starttime, epoch)
 		self.valid_logger.log_scalar("sparse_categorical_accuracy_%", logs['val_sparse_categorical_accuracy']*100, epoch)
 		self.valid_logger.log_scalar("loss", logs['val_loss'], epoch)
-		# Model save
+		# Model save
 		if ((epoch+1) % self.save_period) == 0:
 			self.model.save(os.path.join(self.path, 'save_'+str(epoch)+'.h5'))
 			_, oldsaves = scan_dir(self.path, '.h5')
@@ -233,7 +233,7 @@ if __name__ == '__main__':
 		if ReduceLROnPlateau_factor and ReduceLROnPlateau_patience and ReduceLROnPlateau_factor <  1:
 			callbacks.append(ReduceLROnPlateau(monitor='val_loss', factor=ReduceLROnPlateau_factor, patience=ReduceLROnPlateau_patience, verbose=1, mode='min', epsilon=0.0001, cooldown=0, min_lr=1e-10))
 		
-		# Training
+		# Training
 		model.fit(x = train_data, 
 			y = train_labels,
 			batch_size = batch_size,

@@ -28,7 +28,7 @@ if __name__ == '__main__':
 	parser.add_argument("-V", "--num-val-partials", default=10, type=int, help="Number of partial images per finger (validation)")
 	parser.add_argument("-A", "--arch", default='alexnet', type=str, help="Network architecture")
 	args = vars(parser.parse_args())
-	# Set up some monitors
+	# Set up some monitors
 	monitors = [
 		TelegramMonitor(api_token="546794449:AAGzmfH9Oa6277Vsl2T9hRrGnNHHSpEMsd8", chat_id="41795159", plot_history=1),
 		PrintMonitor()]
@@ -38,7 +38,7 @@ if __name__ == '__main__':
 		for monitor in monitors:
 			monitor.notify(message=output.getvalue())
 		output.close()
-	# Read input
+	# Read input
 	read_mode = "a"
 	db_path = os.path.abspath(os.path.normpath(args["in"]))
 	filename = os.path.abspath(os.path.normpath(args["out"]))
@@ -80,7 +80,7 @@ if __name__ == '__main__':
 	data_provider = datagen.flow_from_h5file(db_path, **idg_args)
 	num_classes = data_provider.num_classes
 	printmsg("Found", data_provider.tot_samples, "images belonging to", data_provider.num_classes, "classes.")
-	# Build network
+	# Build network
 	if args["arch"] == 'resnet':
 		model = ResNet50(include_top=False,
 			weights='imagenet',
@@ -122,7 +122,7 @@ if __name__ == '__main__':
 				db.resize((db.shape[0]+rep*num_classes, db.shape[1]))
 				printmsg("Appending logits for", rep, "repetitions of", num_classes, "classes to dataset", name, "(total "+str(db.attrs['repetitions'])+" repetitions)")
 			for k in range(prev_rep, db.attrs['repetitions']):
-				begin = k * num_classes # inclusive
+				begin = k * num_classes # inclusive
 				end = (k+1) * num_classes # exclusive
 				time_start = time.time()
 				db[begin:end, :] = model.predict_generator(data_provider, workers=2)

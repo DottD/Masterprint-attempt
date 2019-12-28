@@ -38,10 +38,10 @@ class FPGenerator:
 		- random: returns some "meaningful" parameters
 	"""
 	L = 8 # fixed number of orientation correction parameters per singularity
-	T = 9 # spatial period
+	T = 9 # spatial period
 	
 	def __init__(self, **args):
-		# Read parameters
+		# Read parameters
 		self.rows = args["rows"]
 		self.cols = args["cols"]
 		if self.rows <= 0 or self.cols <= 0:
@@ -50,28 +50,28 @@ class FPGenerator:
 		x, y = np.meshgrid(np.arange(self.cols), np.arange(self.rows))
 		self.z = x + y * 1j
 		self.ai = np.linspace(-np.pi, np.pi, num=self.L+1, endpoint=True)
-		# Initialization - ridge generation
+		# Initialization - ridge generation
 		self.images = [np.zeros((self.rows, self.cols)), np.zeros((self.rows, self.cols))]
-		# Compute parameters
-		f = 1/self.T # spatial frequency
-		sigma = 3/(2*f) * sqrt(1./(6*log(10))) # standard deviation of gabor filter's gaussian envelope
-		self.N = 36 # number of angular samples
+		# Compute parameters
+		f = 1/self.T # spatial frequency
+		sigma = 3/(2*f) * sqrt(1./(6*log(10))) # standard deviation of gabor filter's gaussian envelope
+		self.N = 36 # number of angular samples
 		R = self.T # half side of the gabor filter
 		x, y = np.meshgrid(np.arange(-R, R+1), np.arange(-R, R+1))
 		self.s = self.T # breadth of normalization kernel
-		self.gen_iterations = 1000 # total number of filter applications
+		self.gen_iterations = 1000 # total number of filter applications
 		# Create the filter banks
 		self.angle_samples = np.linspace(-np.pi/2, np.pi/2, num=self.N, endpoint=False)
 		self.gabor = []
 		for t in self.angle_samples:
 			# Define filter
-			tt = t+np.pi/2 # sinusoid along the orientation, not orthogonal
+			tt = t+np.pi/2 # sinusoid along the orientation, not orthogonal
 			self.gabor.append( np.exp( -(x**2+y**2)/(2*sigma**2) ) * np.cos( 2*np.pi*f * (x*cos(tt)+y*sin(tt)) ) )
 	
 	# Define the gk function (depends only on the alpha_i parameters)
 	def __gk(self, alpha, noise):
 		# Compute left and right extrema as pairs like
-		# (new value, old value)
+		# (new value, old value)
 		l = max([ [a[1]+noise[a[0]%self.L], a[1]] for a in enumerate(self.ai) if alpha >= a[1]], key=lambda t:t[1])
 		r = min([ [a[1]+noise[a[0]%self.L], a[1]] for a in enumerate(self.ai) if alpha <= a[1]], key=lambda t:t[1])
 		if l == r: return l[0]
@@ -87,10 +87,10 @@ class FPGenerator:
 		"""
 		loops = args["loops"]
 		deltas = args["deltas"]
-		# Check input
+		# Check input
 		if any([len(row)!=(self.L+2) for row in loops]) or any([len(row)!=(self.L+2) for row in deltas]):
 			raise ValueError("Each singularity must be defined by 2 coordinates and "+str(self.L)+" correction parameters")
-		# Generate orientation
+		# Generate orientation
 		theta = np.zeros(self.z.shape)
 		for loop in loops:
 			ls = loop[0] + loop[1] * 1j
@@ -123,7 +123,7 @@ class FPGenerator:
 		spots = np.array(spots).astype(int)
 		__old = self.images[0]
 		__new = self.images[1]
-		__old.fill(0) # reset image 1
+		__old.fill(0) # reset image 1
 		__new.fill(0) # reset image 2
 		__old[theta.shape[0]-1-spots[:,1], spots[:,0]] = 1
 		# Convert theta and generate masks
@@ -132,13 +132,13 @@ class FPGenerator:
 		dt = np.pi/self.N # step between two consecutive angular samples
 		mask = []
 		for t in self.angle_samples:
-			# Define a mask
+			# Define a mask
 			mask.append( skimage.filters.gaussian((ang_dist(t) <= dt/2).astype(float), sigma=2) )
 		# Apply the filters
 		min_allowed = theta.size * 0.01
 		differences = min_allowed+1
 		while differences > min_allowed:
-			# Apply filter bank
+			# Apply filter bank
 			for n in range(self.N):
 				__new += scipy.signal.convolve(__old, self.gabor[n], mode='same') * mask[n]
 			# Clipping
@@ -146,7 +146,7 @@ class FPGenerator:
 			__new[__new < -1] = -1
 			# Count differences
 			differences = np.count_nonzero(np.abs(__new-__old)>0)
-			# Visualizationm
+			# Visualizationm
 			if pause:
 				plt.ion()
 				plt.cla()
@@ -154,7 +154,7 @@ class FPGenerator:
 				vis_orient(theta)
 				plt.title('Differences '+str(differences))
 				plt.pause(pause)
-			# Update image and reset new_image
+			# Update image and reset new_image
 			__new, __old = __old, __new
 			
 		return __new

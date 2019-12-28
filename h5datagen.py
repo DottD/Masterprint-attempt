@@ -209,9 +209,9 @@ class H5FileIterator(Iterator):
 
 		# Total number of classes
 		self.num_classes = 0
-		# Names of those classes
+		# Names of those classes
 		self.classes = []
-		# Total number of available ROIs
+		# Total number of available ROIs
 		self.tot_samples = 0
 		for group_name in groups:
 			classes = self.h5file[group_name]['classes']
@@ -254,7 +254,7 @@ class H5FileIterator(Iterator):
 		if idx >= self.num_classes:
 			raise ValueError("Idx out of range")
 		# Given the index (spanning among all the groups)
-		# get class name, image and list of top-left positions of available ROIs
+		# get class name, image and list of top-left positions of available ROIs
 		k = 0
 		for group_idx, group_name in enumerate(self.groups):
 			with self.lock:
@@ -294,7 +294,7 @@ class H5FileIterator(Iterator):
 				# Finally return the image
 				return image
 			else:
-				# If this is not the correct group, continue increasing k
+				# If this is not the correct group, continue increasing k
 				k += num_classes
 		# If no group has been found, then the index must have been out of range
 		raise ValueError("Idx out of range")

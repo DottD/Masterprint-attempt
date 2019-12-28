@@ -1,1 +1,11 @@
-git+https://github.com/hadim/keras-toolbox.git
+git+https://github.com/DottD/keras-toolbox.git
+scipy
+progressbar
+numpy
+matplotlib
+peakdetect
+h5py
+psutil
+tensorflow
+keras
+cma

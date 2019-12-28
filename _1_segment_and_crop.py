@@ -106,20 +106,20 @@ def cart2pol(_mat, N):
 	Transform an XY matrix in a rho-theta matrix.
 	N is the number of angles used in the process.
 	"""
-	dx = 1.0 # N dx = pi r
+	dx = 1.0 # N dx = pi r
 	output_theta = np.linspace(0, np.pi, N)
-	# Force mat to be a square
+	# Force mat to be a square
 	if _mat.shape[0] != _mat.shape[1]:
 		mat = cropToMaxEnclosedSquare(_mat)
 	# Get matrix information
 	mat_size = mat.shape[0]
 	mat_center = mat_size/2.0+0.5
-	# Create interpolator
+	# Create interpolator
 	xy_span = np.arange(0, mat_size)
 	interpolator = scipy.interpolate.RectBivariateSpline(xy_span, xy_span, mat)
 	# Create array of radii
 	rad_span = np.arange(0, mat_center)
-	# Initialize the output matrix
+	# Initialize the output matrix
 	output = np.zeros([len(rad_span), len(output_theta)])
 	# For each radius create the array of angles, then interpolate over those points,
 	# and resample to get N points
@@ -145,14 +145,14 @@ def cart2pol(_mat, N):
 	
 def computeRidgeFrequency(image, allowed_range=None):
 	length = np.min(image.shape)
-	# Compute the FFT of the image using a gaussian window
+	# Compute the FFT of the image using a gaussian window
 	kernel = hannWin2D(image.shape)
 	img = image * kernel
 	img = (img-img.mean()) / img.std()
 	img = np.fft.fftshift(np.absolute(np.fft.fft2(img)))
-	# Convert the image to polar representation
+	# Convert the image to polar representation
 	img = cart2pol(img, 32)
-	# Sum (L2-norm) along the angle axis, to get the energy for each circle
+	# Sum (L2-norm) along the angle axis, to get the energy for each circle
 	circle_energy = np.sqrt(np.sum(img**2, axis=1))
 	# Suppress low order terms
 	if allowed_range != None:
@@ -194,9 +194,9 @@ def segmentation(image, _f, p):
 	s = scipy.ndimage.filters.gaussian_filter(saturate_fn(s), _f//2, mode='nearest')
 	# Segmentation
 	foreground = (s >= 0.5).astype(int)
-#	# Take r as half the frequency
+#	# Take r as half the frequency
 #	f = math.ceil(_f/2)
-#	# Generate a circle window as neighborhood
+#	# Generate a circle window as neighborhood
 #	kernel = circleWin(f)
 #	kernel = kernel / kernel.sum()
 #	# Compute the mean in each neighborhood
@@ -210,7 +210,7 @@ def segmentation(image, _f, p):
 #	# Segmentation
 #	foreground = (s >= t).astype(int)
 	if np.count_nonzero(foreground) > 0:
-		# Compute the connected components of the foreground and select the largest
+		# Compute the connected components of the foreground and select the largest
 		label_im, n_labels = scipy.ndimage.label(foreground)
 		all_labels = np.arange(1, n_labels+1)
 		label_area = scipy.ndimage.labeled_comprehension(foreground, label_im, all_labels, np.sum, int, 0)
@@ -221,7 +221,7 @@ def segmentation(image, _f, p):
 	return foreground
 	
 def find_roi_pos(mask, roi_shape=(128,128), step=None):
-	# Eventually reduce mask to gridded points
+	# Eventually reduce mask to gridded points
 	if step:
 		_mask = np.zeros_like(mask)
 		_mask[::step, ::step] = np.logical_or(_mask[::step, ::step], mask[::step, ::step])
@@ -270,11 +270,11 @@ if __name__ == '__main__':
 	in_abs_dir = os.path.abspath(args["in"])
 	out_abs_dir = os.path.abspath(args["out"])
 	img_shape = args["img_shape"]
-	# Scan the directory to find the proper files
+	# Scan the directory to find the proper files
 	_, thumbs_files = scan_dir(in_abs_dir, args["filter"])
 	num_classes = len(thumbs_files)
 	print("Found", num_classes, "people")
-	# Take the directory name as database name
+	# Take the directory name as database name
 	db_name = os.path.basename(in_abs_dir)
 	# Eventually delete a previous group with the same name
 	with h5py.File(out_abs_dir) as f:
@@ -286,7 +286,7 @@ if __name__ == '__main__':
 	os.remove(out_abs_dir_tmp)
 	# Open storage file (read-write mode)
 	with h5py.File(out_abs_dir) as f:
-		# Create a group to hold the current database
+		# Create a group to hold the current database
 		grp = f.require_group(db_name)
 		# Add the roi size attribute (width, height)
 		grp.attrs['roi_size'] = (img_shape[1], img_shape[0])
@@ -329,7 +329,7 @@ if __name__ == '__main__':
 					compression="gzip", compression_opts=9)
 			else: db = grp['rows']
 			db[class_idx] = img.shape[0]
-			# Save classes' names
+			# Save classes' names
 			if not 'classes' in grp.keys():
 				db = grp.create_dataset(name='classes', 
 					shape=(num_classes,), dtype=h5py.special_dtype(vlen=str),
